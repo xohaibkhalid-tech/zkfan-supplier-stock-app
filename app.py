@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v2.2-polish-a"
+VERSION = db.VERSION  # "v2.3-simplicity-a"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SUPPLIER_STOCK_SECRET", "dev-only-change-me")
@@ -1254,11 +1254,24 @@ def stock():
     # v2.1: the list is ONLY items that were actually purchased
     # (recomputed from purchase lines — legacy materials never appear).
     # v2.2: canonical items (aliases merged), organised into groups.
+    # v2.3: VIEW-ONLY page — all item-admin tools (group / rename /
+    # merge) moved to /stock/manage so this page stays clean.
+    items = purchased_items()
+    groups = db.stock_groups(items)
+    return render_template("stock.html", rows=items, groups=groups)
+
+
+@app.route("/stock/manage")
+@owner_required
+def stock_manage():
+    """Owner-only item administration: group move, rename, merge and
+    the merged-items (aliases) list. The POST endpoints are the same
+    ones the stock page used inline before v2.3."""
     items = purchased_items()
     groups = db.stock_groups(items)
     group_names = list(db.GROUP_ORDER) + sorted(
         {g["name"] for g in groups} - set(db.GROUP_ORDER))
-    return render_template("stock.html", rows=items, groups=groups,
+    return render_template("stock_manage.html", groups=groups,
                            all_items=items, group_names=group_names,
                            aliases=db.list_aliases(items=items))
 

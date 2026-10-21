@@ -1,6 +1,7 @@
 {% extends "base.html" %}{% block t %}Stock{% endblock %}{% block body %}
 <div class="card">
 <div class="row"><h3 class="grow">📦 Factory Stock</h3>
+{% if is_owner %}<a class="btn small gray" href="{{ url_for('stock_manage') }}">⚙️ Manage Items</a>{% endif %}
 <a class="btn small green" href="{{ url_for('usage_add') }}">➖ Usage entry</a></div>
 <div class="hint">Items groups mein organised hain — group par click karein to khulega/band hoga. Sirf wohi items jo purchases mein aye hain. Item ki <b>History</b> par click karein — poori history khul jayegi.{% if is_owner %} Excel: <a class="link" href="{{ url_for('export_xlsx', name='stock') }}">stock.xlsx</a> · <a class="link" href="{{ url_for('stock_adjust') }}">⚖️ Stock adjust</a>{% endif %}</div>
 </div>
@@ -19,28 +20,6 @@
     <div class="hint">Aaya: {% if x.in_qty %}{{ x.in_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.in_kg|qty }} kg{% endif %}
     · Use hua: {% if x.out_qty %}{{ x.out_qty|qty }} pcs{% endif %}{% if x.out_qty and x.out_kg %} · {% endif %}{% if x.out_kg %}{{ x.out_kg|qty }} kg{% endif %}{% if not x.out_qty and not x.out_kg %}—{% endif %}
     · <b>Bacha: {% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</b></div>
-    {% if is_owner %}
-    <div class="itemctl">
-      <form method="post" action="{{ url_for('stock_move_group') }}">
-        <input type="hidden" name="canonical_key" value="{{ x.key }}">
-        <select name="group_name" title="Group">{% for gn in group_names %}<option value="{{ gn }}"{% if gn == x.group %} selected{% endif %}>{{ gn }}</option>{% endfor %}</select>
-        <input type="text" name="new_group" placeholder="Ya naya group…" size="12">
-        <button class="btn small gray" type="submit">Group</button>
-      </form>
-      <form method="post" action="{{ url_for('stock_rename') }}">
-        <input type="hidden" name="canonical_key" value="{{ x.key }}">
-        <input type="text" name="label" value="{{ x.label }}" placeholder="Display naam" size="14">
-        <button class="btn small gray" type="submit">Rename</button>
-      </form>
-      {% if all_items|length > 1 %}
-      <form method="post" action="{{ url_for('stock_merge') }}" onsubmit="return confirm('Ye item doosre item ke saath merge ho jayega (stock mein ek ginna jayega). Purchase history waisi hi rahegi.')">
-        <input type="hidden" name="variant_key" value="{{ x.key }}">
-        <select name="target_key" title="Merge target">{% for t in all_items %}{% if t.key != x.key %}<option value="{{ t.key }}">{{ t.name }}</option>{% endif %}{% endfor %}</select>
-        <button class="btn small gray" type="submit">Merge →</button>
-      </form>
-      {% endif %}
-    </div>
-    {% endif %}
   </div>
   {% endfor %}
   </div>
@@ -48,17 +27,4 @@
 {% else %}
 <div class="card">Abhi koi purchased item nahi — pehli purchase se stock banna shuru hoga.</div>
 {% endfor %}
-{% if is_owner and aliases %}
-<div class="card">
-<h3>🔀 Merged items</h3>
-<div class="hint">Ye naam ab doosre item ke saath gine jate hain. Unmerge karne se item dobara alag nazar aayega (purchase history hamesha mehfooz rehti hai).</div>
-<table class="mt">
-<tr><th>Naam (variant)</th><th>Ginna jata hai</th><th></th></tr>
-{% for a in aliases %}
-<tr><td>{{ a.variant }}</td><td>→ <b>{{ a.target_name }}</b></td>
-<td class="num"><form method="post" action="{{ url_for('stock_alias_delete') }}" style="display:inline"><input type="hidden" name="variant" value="{{ a.variant }}"><button class="btn small red" type="submit">Unmerge</button></form></td></tr>
-{% endfor %}
-</table>
-</div>
-{% endif %}
 {% endblock %}
