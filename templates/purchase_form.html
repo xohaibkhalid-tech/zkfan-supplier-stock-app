@@ -1,0 +1,169 @@
+{% extends "base.html" %}{% block t %}{{ 'Edit' if p else 'Nayi' }} purchase{% endblock %}{% block body %}
+<div class="card">
+<h3>{{ '✏️ Edit purchase ' + p.id if p else '🧾 Nayi purchase' }}</h3>
+<form method="post" class="entry-form" id="pur-form">
+<label>Party *</label>
+<select name="supplier_id" required>
+  <option value="">— party chunein —</option>
+  {% for s in suppliers %}
+  <option value="{{ s.id }}" {% if (p and p.supplier_id == s.id) or (not p and preselect == s.id) %}selected{% endif %}>{{ s.name }}</option>
+  {% endfor %}
+</select>
+<label>Date *</label>
+<input name="date" type="date" required value="{{ p.date if p else today }}">
+
+<label>Mode</label>
+<div class="row">
+  <label style="font-weight:400" class="grow"><input type="radio" name="mode" value="piece" style="width:auto" {% if not p or p.mode == 'piece' %}checked{% endif %} onchange="modeChange()"> Per Piece (qty × rate)</label>
+  <label style="font-weight:400" class="grow"><input type="radio" name="mode" value="kg" style="width:auto" {% if p and p.mode == 'kg' %}checked{% endif %} onchange="modeChange()"> Per KG (wazan × rate)</label>
+</div>
+<div id="ratekg-wrap">
+<label>Rate per KG (Rs)</label>
+<input name="rate_per_kg" id="rate_per_kg" type="number" step="any" value="{{ p.rate_per_kg if p and p.rate_per_kg else '' }}" placeholder="e.g. 950" oninput="recalc()">
+</div>
+
+<h4 class="mt">Lines (maal ki tafseel)</h4>
+<div id="lines"></div>
+<button type="button" class="btn small green" onclick="addLine()">➕ Line add karo</button>
+
+<div class="card" style="background:#eef3f8;margin:12px 0">
+  <div class="row"><div class="grow">Kul wazan</div><b id="tot-kg">0 kg</b></div>
+  <div class="row"><div class="grow">Kul amount</div><b id="tot-amt">Rs 0</b></div>
+  <div class="row"><div class="grow">Bakaya (amount − cash)</div><b id="tot-bakaya" class="neg">Rs 0</b></div>
+</div>
+
+<label>Cash diya (Rs) — is purchase par</label>
+<input name="cash_paid" id="cash_paid" type="number" step="any" value="{{ p.cash_paid if p and p.cash_paid else '' }}" placeholder="0" oninput="recalc()">
+<label>Cash kis se diya (method)</label>
+<select name="cash_method_id">
+  <option value="0">—</option>
+  {% for m in methods %}<option value="{{ m.id }}" {% if p and p.cash_method_id == m.id %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+</select>
+<label>Note</label>
+<textarea name="notes" rows="2" placeholder="koi note...">{{ p.notes if p else '' }}</textarea>
+
+<button class="btn green" type="submit">💾 Save purchase (Enter)</button>
+<a class="btn gray" data-cancel href="{{ url_for('purchases') }}">Cancel (Esc)</a>
+</form>
+</div>
+
+{# hidden line-row template (JS clones it) #}
+<div id="tpl" style="display:none">
+<div class="line-row" style="border:1.5px solid #dde3ea;border-radius:12px;padding:12px;margin:8px 0">
+  <div class="row">
+    <select name="kind[]" class="kind-sel grow" onchange="applyKind(this)">
+      <option value="piece">Piece — qty × rate</option>
+      <option value="dhalai">Dhalai — body + cup (per-piece wazan)</option>
+      <option value="set">Blade set — sets × per-set wazan (1 set = 3 blades)</option>
+      <option value="plain">Plain KG — seedha wazan</option>
+      <option value="other">Other item — extra service/product</option>
+    </select>
+    <button type="button" class="btn small red" onclick="this.closest('.line-row').remove(); recalc()">✕</button>
+  </div>
+  <label>Item / model naam</label>
+  <input name="lname[]" placeholder="e.g. flash, body dabba, copper wire, service..." oninput="recalc()">
+  <div class="g g-piece">
+    <div class="grid2">
+      <div><label>Qty (pieces)</label><input name="qty[]" type="number" step="any" oninput="recalc()"></div>
+      <div><label>Rate per piece (Rs)</label><input name="rate[]" type="number" step="any" oninput="recalc()"></div>
+    </div>
+  </div>
+  <div class="g g-dhalai">
+    <div class="grid2">
+      <div><label>Body qty</label><input name="body_qty[]" type="number" step="any" oninput="recalc()"></div>
+      <div><label>Per-body wazan (kg)</label><input name="body_wt[]" type="number" step="any" oninput="recalc()"></div>
+      <div><label>Cup qty</label><input name="cup_qty[]" type="number" step="any" oninput="recalc()"></div>
+      <div><label>Per-cup wazan (kg)</label><input name="cup_wt[]" type="number" step="any" oninput="recalc()"></div>
+    </div>
+  </div>
+  <div class="g g-set">
+    <div class="grid2">
+      <div><label>Sets (1 set = 3 blades)</label><input name="sets[]" type="number" step="any" oninput="recalc()"></div>
+      <div><label>Per-set wazan (kg)</label><input name="set_wt[]" type="number" step="any" oninput="recalc()"></div>
+    </div>
+  </div>
+  <div class="g g-plain">
+    <label>Kul wazan (kg)</label><input name="weight_kg[]" type="number" step="any" oninput="recalc()">
+  </div>
+  <div class="g g-other">
+    <label>Amount (Rs) — extra item/service</label><input name="oamount[]" type="number" step="any" oninput="recalc()">
+  </div>
+  <div class="hint">Line: <b class="line-kg"></b> <b class="line-amt"></b></div>
+</div>
+</div>
+
+<script>
+function num(el){ var v = parseFloat(el && el.value); return isNaN(v) ? 0 : v; }
+function q(row, name){ return row.querySelector('[name="' + name + '"]'); }
+function fmt(n){ return 'Rs ' + Math.round(n).toLocaleString('en-US'); }
+function fmtkg(n){ return (Math.round(n * 1000) / 1000).toString() + ' kg'; }
+
+function applyKind(sel){
+  var row = sel.closest('.line-row'), k = sel.value;
+  ['piece','dhalai','set','plain','other'].forEach(function(g){
+    row.querySelector('.g-' + g).style.display = (g === k) ? '' : 'none';
+  });
+  recalc();
+}
+function modeChange(){
+  var kg = document.querySelector('input[name="mode"]:checked').value === 'kg';
+  document.getElementById('ratekg-wrap').style.display = kg ? '' : 'none';
+  recalc();
+}
+function addLine(data){
+  var tpl = document.querySelector('#tpl .line-row');
+  var row = tpl.cloneNode(true);
+  document.getElementById('lines').appendChild(row);
+  var sel = row.querySelector('.kind-sel');
+  if (data) {
+    sel.value = data.kind || 'piece';
+    q(row,'lname[]').value = data.name || '';
+    q(row,'qty[]').value = data.qty || '';
+    q(row,'rate[]').value = data.rate || '';
+    q(row,'body_qty[]').value = data.body_qty || '';
+    q(row,'body_wt[]').value = data.body_wt || '';
+    q(row,'cup_qty[]').value = data.cup_qty || '';
+    q(row,'cup_wt[]').value = data.cup_wt || '';
+    q(row,'sets[]').value = data.sets || '';
+    q(row,'set_wt[]').value = data.set_wt || '';
+    q(row,'weight_kg[]').value = data.weight_kg || '';
+    q(row,'oamount[]').value = data.oamount || '';
+  } else {
+    var kg = document.querySelector('input[name="mode"]:checked').value === 'kg';
+    sel.value = kg ? 'dhalai' : 'piece';
+  }
+  applyKind(sel);
+  var nm = q(row,'lname[]'); if (nm) nm.focus();
+}
+function recalc(){
+  var rateKg = num(document.getElementById('rate_per_kg'));
+  var totKg = 0, totAmt = 0;
+  document.querySelectorAll('#lines .line-row').forEach(function(row){
+    var k = row.querySelector('.kind-sel').value, kg = 0, amt = 0;
+    if (k === 'piece') { amt = num(q(row,'qty[]')) * num(q(row,'rate[]')); }
+    else if (k === 'dhalai') {
+      kg = num(q(row,'body_qty[]')) * num(q(row,'body_wt[]')) + num(q(row,'cup_qty[]')) * num(q(row,'cup_wt[]'));
+      amt = kg * rateKg;
+    }
+    else if (k === 'set') { kg = num(q(row,'sets[]')) * num(q(row,'set_wt[]')); amt = kg * rateKg; }
+    else if (k === 'plain') { kg = num(q(row,'weight_kg[]')); amt = kg * rateKg; }
+    else if (k === 'other') { amt = num(q(row,'oamount[]')); }
+    totKg += kg; totAmt += amt;
+    row.querySelector('.line-kg').textContent = kg ? fmtkg(kg) + ' · ' : '';
+    row.querySelector('.line-amt').textContent = amt ? fmt(amt) : '';
+  });
+  document.getElementById('tot-kg').textContent = fmtkg(totKg);
+  document.getElementById('tot-amt').textContent = fmt(totAmt);
+  var cash = num(document.getElementById('cash_paid'));
+  document.getElementById('tot-bakaya').textContent = fmt(totAmt - cash);
+}
+{% for ln in lines %}
+addLine({kind: {{ ln.kind|tojson }}, name: {{ ln.name|tojson }}, qty: {{ ln.qty or '' }}, rate: {{ ln.rate or '' }},
+  body_qty: {{ ln.body_qty or '' }}, body_wt: {{ ln.body_wt or '' }}, cup_qty: {{ ln.cup_qty or '' }}, cup_wt: {{ ln.cup_wt or '' }},
+  sets: {{ ln.body_qty if ln.kind == 'set' else '' }}, set_wt: {{ ln.body_wt if ln.kind == 'set' else '' }},
+  weight_kg: {{ ln.weight_kg or '' }}, oamount: {{ ln.amount if ln.kind == 'other' else '' }}});
+{% endfor %}
+if (!document.querySelectorAll('#lines .line-row').length) addLine();
+modeChange();
+</script>
+{% endblock %}

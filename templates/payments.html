@@ -1,0 +1,36 @@
+{% extends "base.html" %}{% block t %}Payments{% endblock %}{% block body %}
+<div class="card">
+<div class="row"><h3 class="grow">💸 Payments</h3>
+<a class="btn small green" href="{{ url_for('payment_add') }}">➕ Nayi Payment</a></div>
+<div class="hint">Excel: <a class="link" href="{{ url_for('export_xlsx', name='payments') }}">payments.xlsx</a> ·
+Card select karke <b>Delete</b> key bhi chalti hai.</div>
+</div>
+{% for p in rows %}
+<div class="card" tabindex="0" {% if p.kind != 'purchase_payment' and p.status == 'active' %}data-del="{{ url_for('payment_delete', pid=p.id) }}"{% endif %}>
+  <div class="row">
+    <div class="grow"><b>{{ p.sname }}</b> · {{ p.date or '—' }}
+    {% if p.kind == 'advance' %}<span class="badge b-adv">Advance</span>{% elif p.kind == 'purchase_payment' %}<span class="badge b-cash">Purchase cash</span>{% else %}<span class="badge b-draft">Payment</span>{% endif %}
+    {% if p.kind == 'payment' %}<span class="badge {{ 'b-credit' if (p.applies_to or 'previous') == 'current' else 'b-draft' }}">{{ 'Current' if (p.applies_to or 'previous') == 'current' else 'Previous' }}</span>{% elif p.kind in ('advance', 'purchase_payment') %}<span class="badge b-credit">Current</span>{% endif %}
+    {% if p.status == 'voided' %}<span class="badge b-void">VOID — {{ p.void_reason }}</span>{% endif %}
+    <br><small class="hint">{{ p.id }}{% if p.method_name or p.paid_from %} · {{ p.method_name or p.paid_from }}{% endif %}{% if p.purchase_id %} · {{ p.purchase_id }}{% endif %}{% if p.notes %} · 📝 {{ p.notes }}{% endif %}</small></div>
+    <div class="num"><span class="big-num" style="font-size:20px">{{ p.amount|rs }}</span>
+    {% if p.discount %}<br><small class="pos">discount {{ p.discount|rs }}</small>{% endif %}</div>
+  </div>
+  {% if p.kind != 'purchase_payment' %}
+  <div class="mt">
+    {% if p.status == 'active' %}
+    <a class="btn small gray" href="{{ url_for('payment_edit', pid=p.id) }}">✏️ Edit</a>
+    <a class="btn small gray" href="{{ url_for('payment_void', pid=p.id) }}">🚫 Void</a>
+    {% endif %}
+    <form method="post" action="{{ url_for('payment_delete', pid=p.id) }}" style="display:inline" onsubmit="return confirm('Payment delete kar dein?')">
+      <button class="btn small red" type="submit">🗑 Delete</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="hint mt">Purchase cash — ye purchase se link hai; badalna ho to purchase Edit karein.</div>
+  {% endif %}
+</div>
+{% else %}
+<div class="card">Koi payment nahi.</div>
+{% endfor %}
+{% endblock %}

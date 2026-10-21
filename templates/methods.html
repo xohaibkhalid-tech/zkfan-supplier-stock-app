@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% block t %}Payment Methods{% endblock %}{% block body %}
+<div class="card">
+<h3>🏦 Payment Methods / Settings</h3>
+<div class="hint">Payment kis tareeqay se di — Cash, bank waghera. Naya bank/method yahin se add hota hai; payments mein foran aa jayega.</div>
+<form method="post" class="row mt">
+  <input name="name" class="grow" required placeholder="Naya method — e.g. Allied Bank, JazzCash...">
+  <button class="btn small green" type="submit">➕ Add</button>
+</form>
+</div>
+{% for m in rows %}
+<div class="card">
+  <form method="post" action="{{ url_for('method_edit', mid=m.id) }}" class="row">
+    <input name="name" class="grow" value="{{ m.name }}" required>
+    <label style="font-weight:400;margin:0"><input type="checkbox" name="active" value="1" style="width:auto" {% if m.active %}checked{% endif %}> On</label>
+    <button class="btn small" type="submit">💾 Save</button>
+  </form>
+  <form method="post" action="{{ url_for('method_delete', mid=m.id) }}" onsubmit="return confirm('Method delete kar dein?')">
+    <button class="btn small red" type="submit">🗑 Delete</button>
+  </form>
+</div>
+{% endfor %}
+{% endblock %}

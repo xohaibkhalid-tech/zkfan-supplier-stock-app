@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block t %}Error{% endblock %}{% block body %}
+<div class="card" style="margin-top:30px"><h2>⚠️ {{ msg }}</h2>
+<a class="btn gray" href="{{ url_for('dashboard') }}">Home wapas</a></div>
+{% endblock %}

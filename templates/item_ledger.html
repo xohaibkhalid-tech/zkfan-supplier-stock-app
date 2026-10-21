@@ -1,0 +1,47 @@
+{% extends "base.html" %}{% block t %}{{ it.name }}{% endblock %}{% block body %}
+<div class="card">
+<div class="row"><div class="grow"><h3>📦 {{ it.name }}</h3><small class="hint">{{ it.unit }}</small></div>
+<div class="num"><div class="lbl">BACHA HUA</div><div class="big-num">{% if it.in_qty %}{{ it.rem_qty|qty }} pcs{% endif %}{% if it.in_qty and it.in_kg %} · {% endif %}{% if it.in_kg %}{{ it.rem_kg|qty }} kg{% endif %}</div></div></div>
+<table>
+<tr><td>Aaya (purchases se)</td><td class="num pos">{% if it.in_qty %}{{ it.in_qty|qty }} pcs{% endif %}{% if it.in_qty and it.in_kg %} · {% endif %}{% if it.in_kg %}{{ it.in_kg|qty }} kg{% endif %}</td>
+<td>Use hua</td><td class="num neg">{% if it.out_qty %}{{ it.out_qty|qty }} pcs{% endif %}{% if it.out_qty and it.out_kg %} · {% endif %}{% if it.out_kg %}{{ it.out_kg|qty }} kg{% endif %}{% if not it.out_qty and not it.out_kg %}0{% endif %}</td></tr>
+<tr><td>Adjust</td><td class="num">{% if it.adj_qty %}{{ it.adj_qty|qty }} pcs{% endif %}{% if it.adj_qty and it.adj_kg %} · {% endif %}{% if it.adj_kg %}{{ it.adj_kg|qty }} kg{% endif %}{% if not it.adj_qty and not it.adj_kg %}0{% endif %}</td>
+<td>Bacha hua</td><td class="num"><b>{% if it.in_qty %}{{ it.rem_qty|qty }} pcs{% endif %}{% if it.in_qty and it.in_kg %} · {% endif %}{% if it.in_kg %}{{ it.rem_kg|qty }} kg{% endif %}</b></td></tr>
+</table>
+<a class="btn small green" href="{{ url_for('usage_add') }}">➖ Usage entry</a>
+{% if is_owner %}<a class="btn small gray" href="{{ url_for('stock_adjust') }}">⚖️ Adjust</a>{% endif %}
+<a class="btn small gray" data-cancel href="{{ url_for('stock') }}">← Stock</a>
+</div>
+<div class="card">
+<h3>Purchases — ye item kab kab aaya</h3>
+<table>
+<tr><th>Date</th><th>Party</th><th>Purchase</th><th class="num">Qty / Kg</th></tr>
+{% for r in receipts %}
+<tr><td>{{ r.pdate }}</td><td>{{ r.sname }}</td>
+<td>{% if is_owner %}<a class="link" href="{{ url_for('purchase_edit', pid=r.purchase_id) }}">{{ r.purchase_id }}</a>{% else %}{{ r.purchase_id }}{% endif %}</td>
+<td class="num">{% if r.kind == 'piece' %}{{ r.qty|qty }} pcs{% elif r.kind == 'set' %}{{ r.weight_kg|qty }} kg ({{ r.body_qty|qty }} sets){% elif r.kind in ('dhalai', 'plain') %}{{ r.weight_kg|qty }} kg{% else %}—{% endif %}</td></tr>
+{% else %}
+<tr><td colspan="4">Koi purchase nahi.</td></tr>
+{% endfor %}
+</table>
+</div>
+<div class="card">
+<h3>Usage / Adjustments</h3>
+<table>
+<tr><th>Date</th><th>Type</th><th class="num">Qty</th><th>Note</th>{% if is_owner %}<th></th>{% endif %}</tr>
+{% for mv in moves %}
+<tr><td>{{ mv.date }}</td>
+<td>{% if mv.type == 'OUT' %}<span class="badge b-credit">OUT</span>{% else %}<span class="badge b-draft">ADJ</span>{% endif %}</td>
+<td class="num">{{ mv.qty|qty }}</td>
+<td><small>{{ mv.notes or '' }}<br>{{ mv.entered_by }}</small></td>
+{% if is_owner %}
+<td class="num"><form method="post" action="{{ url_for('movement_delete', lid=mv.id) }}" onsubmit="return confirm('Movement delete kar dein?')">
+<button class="btn small red" type="submit">🗑</button></form></td>
+{% endif %}
+</tr>
+{% else %}
+<tr><td colspan="5">Abhi koi usage nahi.</td></tr>
+{% endfor %}
+</table>
+</div>
+{% endblock %}

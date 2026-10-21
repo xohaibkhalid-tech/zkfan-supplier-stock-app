@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block t %}{{ 'Edit' if s else 'Nayi' }} party{% endblock %}{% block body %}
+<div class="card">
+<h3>{{ '✏️ Edit party' if s else '➕ Nayi party' }}</h3>
+<form method="post" class="entry-form">
+<label>Naam *</label>
+<input name="name" required autofocus value="{{ s.name if s else '' }}" placeholder="e.g. Kashif Yaqoob">
+<label>Category / detail</label>
+<input name="category" list="cats" value="{{ s.category if s else '' }}" placeholder="e.g. Dhalai">
+<datalist id="cats">{% for c in categories %}<option value="{{ c }}">{% endfor %}</datalist>
+<label>Phone</label>
+<input name="phone" value="{{ s.phone if s else '' }}">
+<label>Opening (previous) balance — Rs</label>
+<input name="opening_balance" type="number" step="any" value="{{ s.opening_balance if s and s.opening_balance else '' }}" placeholder="0">
+<label>Opening date</label>
+<input name="opening_date" type="date" value="{{ s.opening_date if s else '' }}">
+<label>Notes</label>
+<textarea name="notes" rows="2">{{ s.notes if s else '' }}</textarea>
+{% if s %}
+<label style="font-weight:400"><input type="checkbox" name="active" value="1" style="width:auto" {% if s.active %}checked{% endif %}> Active hai</label>
+{% endif %}
+<button class="btn green" type="submit">💾 Save (Enter)</button>
+<a class="btn gray" data-cancel href="{{ url_for('suppliers') }}">Cancel (Esc)</a>
+</form>
+</div>
+{% endblock %}

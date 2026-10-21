@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block t %}Parties{% endblock %}{% block body %}
+<div class="card">
+<div class="row"><h3 class="grow">👥 Parties (Suppliers)</h3>
+<a class="btn small green" href="{{ url_for('supplier_add') }}">➕ Nayi Party</a></div>
+<div class="hint">Excel: <a class="link" href="{{ url_for('export_xlsx', name='suppliers') }}">suppliers.xlsx</a></div>
+</div>
+{% for x in suppliers %}
+<div class="card" tabindex="0">
+  <div class="row">
+    <div class="grow"><b style="font-size:18px">{{ x.row.name }}</b>
+    <span class="badge b-draft">{{ x.row.category }}</span>
+    {% if not x.row.active %}<span class="badge b-void">deactivated</span>{% endif %}
+    <br><small class="hint">Opening: {{ x.row.opening_balance|rs }}{% if x.row.phone %} · {{ x.row.phone }}{% endif %}</small></div>
+    <div class="num">{% if x.out < 0 %}<span class="badge b-adv">Advance {{ (-x.out)|rs }}</span>{% else %}<span class="big-num" style="font-size:20px">{{ x.out|rs }}</span><br><small class="hint">kul bakaya</small>{% endif %}<br><small class="hint">Previous: {{ x.bal.prev_remaining|rs }} · Current: {{ x.bal.current_bakaya|rs }}</small></div>
+  </div>
+  <div class="mt">
+    <a class="btn small" href="{{ url_for('supplier_ledger', sid=x.row.id) }}">📒 Ledger</a>
+    <a class="btn small green" href="{{ url_for('payment_add', supplier_id=x.row.id) }}">💸 Payment</a>
+    <a class="btn small gray" href="{{ url_for('purchase_add', supplier_id=x.row.id) }}">🧾 Purchase</a>
+    <a class="btn small gray" href="{{ url_for('supplier_edit', sid=x.row.id) }}">✏️ Edit</a>
+    <form method="post" action="{{ url_for('supplier_delete', sid=x.row.id) }}" style="display:inline" onsubmit="return confirm('Party delete kar dein?')">
+      <button class="btn small red" type="submit">🗑 Delete</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

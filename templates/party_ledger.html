@@ -1,0 +1,60 @@
+{% extends "base.html" %}{% block t %}Ledger — {{ s.name }}{% endblock %}{% block body %}
+<div class="card">
+  <div class="row">
+    <div class="grow">
+      <h2>📒 {{ s.name }}</h2>
+      <small class="hint">{{ s.category }}{% if s.phone %} · {{ s.phone }}{% endif %} · {{ s.id }}</small>
+    </div>
+    <div class="num">
+      <div class="lbl">OUTSTANDING</div>
+      {% if balance < 0 %}
+      <div class="big-num" style="color:#1F4E79">{{ (-balance)|rs }}</div>
+      <span class="badge b-adv">ADVANCE — party ke paas hamara advance hai</span>
+      {% else %}
+      <div class="big-num neg">{{ balance|rs }}</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="no-print mt">
+    <button class="btn small" onclick="window.print()">🖨 Print / PDF</button>
+    <a class="btn small gray" href="{{ url_for('export_party_ledger', sid=s.id) }}">📥 Excel</a>
+    <a class="btn small green" href="{{ url_for('payment_add', supplier_id=s.id) }}">💸 Payment do</a>
+    <a class="btn small gray" href="{{ url_for('supplier_edit', sid=s.id) }}">✏️ Edit party</a>
+    <a class="btn small gray" data-cancel href="{{ url_for('suppliers') }}">← Parties</a>
+  </div>
+</div>
+
+<div class="grid2 mt">
+  <div class="kpi">
+    <div class="lbl">PREVIOUS BALANCE (purana)</div>
+    <div class="hint">Opening: {{ split.opening|rs }} · Paid: {{ split.prev_paid|rs }}</div>
+    <div class="v neg">{{ split.prev_remaining|rs }}</div>
+    <div class="hint">baqi previous</div>
+  </div>
+  <div class="kpi">
+    <div class="lbl">CURRENT (nayi purchases)</div>
+    <div class="hint">Purchases bakaya: {{ split.purchase_bakaya_gross|rs }} · Paid: {{ (split.current_paid + split.spill + split.advance_paid)|rs }}{% if split.spill or split.advance_paid %} <span title="Previous se spill + advance shamil hai">(incl. spill/advance)</span>{% endif %}</div>
+    <div class="v neg">{{ split.current_bakaya|rs }}</div>
+    <div class="hint">baqi current</div>
+  </div>
+</div>
+
+<div class="card">
+<table>
+<tr><th>Date</th><th>Type</th><th>Detail</th><th class="num">Plus</th><th class="num">Minus</th><th class="num">Balance</th></tr>
+{% for r in rows %}
+<tr class="{{ 'struck' if r.void }}">
+  <td>{{ r.date }}</td>
+  <td>{% if r.type == 'Advance' %}<span class="badge b-adv">Advance</span>{% elif r.type == 'Purchase' %}<span class="badge b-credit">Purchase</span>{% elif r.type == 'Purchase cash' %}<span class="badge b-cash">Pur. cash</span>{% elif r.type == 'Opening' %}<span class="badge b-draft">Opening</span>{% else %}Payment{% endif %}{% if r.tag == 'Previous' %} <span class="badge b-draft">Previous</span>{% elif r.tag == 'Current' %} <span class="badge b-credit">Current</span>{% endif %}{% if r.void %} <span class="badge b-void">void</span>{% endif %}<br><small class="hint">{{ r.ref }}</small></td>
+  <td>{{ r.detail }}</td>
+  <td class="num">{{ r.plus|rs if r.plus else '—' }}</td>
+  <td class="num">{{ r.minus|rs if r.minus else '—' }}</td>
+  <td class="num"><b>{{ r.bal|rs }}</b></td>
+</tr>
+{% endfor %}
+<tr><td colspan="5" style="text-align:right"><b>Final outstanding</b></td>
+<td class="num"><b>{{ balance|rs }}</b></td></tr>
+</table>
+{% if balance < 0 %}<div class="alert">ℹ️ Final balance negative hai — matlab <b>Advance {{ (-balance)|rs }}</b> party ke paas hamara para hai.</div>{% endif %}
+</div>
+{% endblock %}

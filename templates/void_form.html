@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block t %}{{ title }}{% endblock %}{% block body %}
+<div class="card">
+<h3>⚠️ {{ title }} — {{ ref }}</h3>
+<div class="alert">Void = record <b>delete nahi</b> hoga, sirf void mark hoga + stock wapas hoga. Wajah audit mein save hogi.</div>
+<form method="post">
+<label>Wajah * (zaroori)</label><textarea name="reason" rows="3" required></textarea>
+<button class="btn red" type="submit">Void kar do</button>
+<a class="btn gray" href="javascript:history.back()">Cancel</a>
+</form>
+</div>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}{% block t %}{{ 'Edit' if p else 'Nayi' }} payment{% endblock %}{% block body %}
+<div class="card">
+<h3>{{ '✏️ Edit payment' if p else '💸 Nayi payment' }}</h3>
+<form method="post" class="entry-form">
+<label>Party *</label>
+<select name="supplier_id" required>
+  <option value="">— party chunein —</option>
+  {% for s in suppliers %}
+  <option value="{{ s.id }}" {% if (p and p.supplier_id == s.id) or (not p and preselect == s.id) %}selected{% endif %}>{{ s.name }}</option>
+  {% endfor %}
+</select>
+<label>Date *</label>
+<input name="date" type="date" required value="{{ p.date if p else today }}">
+<label>Qisam</label>
+<select name="kind">
+  <option value="payment" {% if p and p.kind == 'payment' %}selected{% endif %}>Payment (bakaya kam karegi)</option>
+  <option value="advance" {% if p and p.kind == 'advance' %}selected{% endif %}>Advance (pehle se diya — bakaya negative = advance)</option>
+</select>
+<label>Ye payment kis ki hai?</label>
+<select name="applies_to">
+  <option value="previous" {% if (p and (p.applies_to or 'previous') == 'previous' and not p.purchase_id) or (not p and not pre_purchase) %}selected{% endif %}>Previous Balance (purana bakaya)</option>
+  <option value="current" {% if (p and ((p.applies_to or 'previous') == 'current' or p.purchase_id)) or (not p and pre_purchase) %}selected{% endif %}>Current Purchases (nayi khareed ka bakaya)</option>
+</select>
+<div class="hint">Agar neeche kisi purchase ke against select kiya, to payment <b>Current</b> hi lagegi. Advance bhi Current mein ginti hoti hai.</div>
+<label>Raqam (Rs) *</label>
+<input name="amount" type="number" step="any" required autofocus value="{{ p.amount if p else '' }}" placeholder="e.g. 50000">
+<label>Discount (Rs) — agar rate par chhoot mili</label>
+<input name="discount" type="number" step="any" value="{{ p.discount if p and p.discount else '' }}" placeholder="0">
+<label>Method (kis se diye) *</label>
+<select name="method_id">
+  <option value="0">— select —</option>
+  {% for m in methods %}<option value="{{ m.id }}" {% if p and p.method_id == m.id %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+</select>
+<div class="hint">Naya method add karna ho to <a class="link" href="{{ url_for('methods') }}">Methods / Settings</a> se add karein.</div>
+<label>Kisi purchase ke against (optional)</label>
+<select name="purchase_id">
+  <option value="">— koi nahi —</option>
+  {% for pu in purchases %}
+  <option value="{{ pu.id }}" {% if (p and p.purchase_id == pu.id) or (not p and pre_purchase == pu.id) %}selected{% endif %}>{{ pu.id }} · {{ pu.sname }} · {{ pu.date }} · {{ pu.amount|rs }}</option>
+  {% endfor %}
+</select>
+<label>Note</label>
+<textarea name="notes" rows="2" placeholder="koi note...">{{ p.notes if p else '' }}</textarea>
+<button class="btn green" type="submit">💾 Save (Enter)</button>
+<a class="btn gray" data-cancel href="{{ url_for('payments') }}">Cancel (Esc)</a>
+</form>
+</div>
+{% endblock %}

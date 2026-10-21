@@ -1,0 +1,36 @@
+{% extends "base.html" %}{% block t %}Links{% endblock %}{% block body %}
+<div class="card">
+<h3>🔗 CashBook Pro Integration</h3>
+<div class="alert" style="background:#fbdada;border-color:#b3372f">
+<b>⛔ Integration ABHI OFF hai</b> — aapke hukam par (21 Oct 2026).<br>
+CashBook Pro mein aapki apni manual entries pehle se up-to-date hain; is app se
+auto-post hua to duplicate/mismatch ho jayega. Is liye v2 mein <b>koi bhi
+purchase ya payment CashBook mein post NAHI hoti</b>.<br>
+Integration <b>baad mein</b> hogi — jab ye system complete ho jayega, ek dafa,
+ehteyaat se, previous transactions samet.
+</div>
+<table>
+<tr><td>CashBook direct link</td><td><b>OFF</b></td></tr>
+<tr><td>Queue mein pending (record only)</td><td><b>{{ pending }}</b></td></tr>
+<tr><td>Failed</td><td><b>{{ failed }}</b></td></tr>
+</table>
+</div>
+
+<div class="card">
+<h3>💾 Backup</h3>
+<div class="hint">Database ki copy backups/ folder mein save hoti hai. Rozana pehli boot par auto-backup bhi banta hai (aakhri 30 rehte hain).</div>
+<a class="btn" href="{{ url_for('backup') }}">💾 Abhi backup lo</a>
+</div>
+
+{% if rows %}
+<div class="card">
+<h3>Queue record (sirf record — post nahi hota)</h3>
+<table>
+<tr><th>#</th><th>Kind</th><th>Party</th><th class="num">Amount</th><th>Status</th></tr>
+{% for r in rows %}
+<tr><td>{{ r.id }}</td><td>{{ r.kind }}</td><td>{{ r.party }}</td><td class="num">{{ r.amount|rs }}</td><td>{{ r.status }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+{% endblock %}

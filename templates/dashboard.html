@@ -1,0 +1,73 @@
+{% extends "base.html" %}{% block t %}Home{% endblock %}{% block body %}
+<div class="grid2 mt">
+  <div class="kpi"><div class="lbl">PREVIOUS BAKAYA (purana balance)</div><div class="v neg">{{ total_prev|rs }}</div></div>
+  <div class="kpi"><div class="lbl">CURRENT BAKAYA (nayi purchases)</div><div class="v neg">{{ total_cur|rs }}</div></div>
+</div>
+<div class="grid2 mt">
+  <div class="kpi"><div class="lbl">KUL BAKAYA (parties ko dena hai)</div><div class="v neg">{{ total_due|rs }}</div></div>
+  <div class="kpi"><div class="lbl">ADVANCE (parties ke paas hamara)</div><div class="v">{{ total_adv|rs }}</div></div>
+</div>
+
+<div class="row mt">
+  <a class="btn green grow" href="{{ url_for('purchase_add') }}">🧾 Nayi Purchase</a>
+  <a class="btn grow" href="{{ url_for('payment_add') }}">💸 Payment do</a>
+</div>
+
+{% if low_stock %}
+<div class="alert">⚠️ <b>Low stock:</b>
+{% for x in low_stock %}{{ x.row.name }}: {{ x.stock|qty }} {{ x.row.unit }}{% if not loop.last %} · {% endif %}{% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+<h3>👥 Parties — outstanding</h3>
+<table>
+<tr><th>Party</th><th class="num">Previous</th><th class="num">Current</th><th class="num">Total</th><th></th></tr>
+{% for x in suppliers %}
+<tr><td><b>{{ x.row.name }}</b>{% if not x.row.active %} <span class="badge b-draft">off</span>{% endif %}</td>
+<td class="num">{{ x.bal.prev_remaining|rs }}</td>
+<td class="num">{% if x.bal.current_bakaya < 0 %}<span class="badge b-adv">Advance {{ (-x.bal.current_bakaya)|rs }}</span>{% else %}{{ x.bal.current_bakaya|rs }}{% endif %}</td>
+<td class="num">{% if x.out < 0 %}<span class="badge b-adv">Advance {{ (-x.out)|rs }}</span>{% else %}<b>{{ x.out|rs }}</b>{% endif %}</td>
+<td class="num"><a class="link" href="{{ url_for('supplier_ledger', sid=x.row.id) }}">Ledger</a></td></tr>
+{% endfor %}
+</table>
+</div>
+
+<div class="card">
+<h3>🧾 Recent purchases</h3>
+<table>
+<tr><th>Date</th><th>Party</th><th class="num">Amount</th><th class="num">Bakaya</th></tr>
+{% for p in recent_pur %}
+<tr><td>{{ p.date }}</td><td>{{ p.sname }}{% if p.status != 'active' %} <span class="badge b-void">void</span>{% endif %}</td>
+<td class="num">{{ p.amount|rs }}</td><td class="num">{{ (p.amount - p.cash_paid)|rs }}</td></tr>
+{% endfor %}
+</table>
+<a class="btn small gray" href="{{ url_for('purchases') }}">Saari purchases</a>
+</div>
+
+<div class="card">
+<h3>💸 Recent payments</h3>
+<table>
+<tr><th>Date</th><th>Party</th><th>Kind</th><th class="num">Amount</th></tr>
+{% for p in recent_pay %}
+<tr><td>{{ p.date or '—' }}</td><td>{{ p.sname }}</td>
+<td>{% if p.kind == 'advance' %}<span class="badge b-adv">Advance</span>{% elif p.kind == 'purchase_payment' %}<span class="badge b-cash">Purchase cash</span>{% else %}Payment{% endif %}</td>
+<td class="num">{{ p.amount|rs }}{% if p.discount %} <small class="hint">+{{ p.discount|rs }} disc</small>{% endif %}</td></tr>
+{% endfor %}
+</table>
+<a class="btn small gray" href="{{ url_for('payments') }}">Saari payments</a>
+</div>
+
+{% if usage7 %}
+<div class="card">
+<h3>📦 Pichle 7 din ka usage</h3>
+<table>
+{% for u in usage7 %}<tr><td>{{ u.name }}</td><td class="num">{{ u.used|qty }} {{ u.unit }}</td></tr>{% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if sync_pending %}
+<div class="alert">🔗 CashBook queue mein {{ sync_pending }} pending hain (integration abhi OFF hai — Links page dekhein).</div>
+{% endif %}
+{% endblock %}

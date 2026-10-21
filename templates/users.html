@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block t %}Users{% endblock %}{% block body %}
+<div class="card">
+<h3>👥 Users</h3>
+<table>
+<tr><th>Username</th><th>Role</th><th>Status</th></tr>
+{% for r in rows %}
+<tr><td><b>{{ r.username }}</b><br><small class="hint">{{ r.created_at or '' }}</small></td>
+<td>{{ r.role }}{% if r.must_change_pw %} <span class="badge b-credit">pw change pending</span>{% endif %}</td>
+<td>{{ 'Active' if r.active else 'Off' }}</td></tr>
+{% endfor %}
+</table>
+</div>
+<div class="card">
+<h3>➕ Naya user</h3>
+<form method="post">
+<label>Username *</label><input name="username" required placeholder="e.g. storekeeper1">
+<label>Role</label><select name="role"><option value="storekeeper">storekeeper (sirf stock + usage)</option><option value="owner">owner (full)</option></select>
+<label>Password (6+ characters) *</label><input name="password" type="password" required>
+<button class="btn" type="submit">User banao</button>
+</form>
+<div class="hint">Naya user pehli login par password change karega. Storekeeper ko <b>sirf stock aur usage</b> nazar aayega — paisa, rates, payments, purchases bilkul nahi.</div>
+</div>
+{% endblock %}

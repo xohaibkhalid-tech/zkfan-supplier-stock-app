@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block t %}Login{% endblock %}{% block body %}
+<div class="card" style="margin-top:30px">
+<h2>🔐 Login</h2>
+<form method="post">
+<label>Username</label><input name="username" autocomplete="username" required>
+<label>Password</label><input name="password" type="password" autocomplete="current-password" required>
+<button class="btn" type="submit">Login</button>
+</form>
+</div>
+{% endblock %}

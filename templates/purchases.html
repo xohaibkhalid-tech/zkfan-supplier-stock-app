@@ -1,0 +1,80 @@
+{% extends "base.html" %}{% block t %}Purchases{% endblock %}{% block body %}
+<div class="card">
+<div class="row"><h3 class="grow">🧾 Purchases</h3>
+<a class="btn small green" href="{{ url_for('purchase_add') }}">➕ Nayi Purchase</a></div>
+<div class="hint">
+Filter: <a class="link" href="{{ url_for('purchases') }}">All</a> ·
+<a class="link" href="{{ url_for('purchases', f='active') }}">Active</a> ·
+<a class="link" href="{{ url_for('purchases', f='voided') }}">Voided</a> ·
+Excel: <a class="link" href="{{ url_for('export_xlsx', name='purchases') }}">purchases.xlsx</a><br>
+Shortcut: kisi card par click karke select karein, <b>Delete</b> key = delete.
+</div>
+<form method="get" action="{{ url_for('purchases') }}" class="mt">
+  <label>🔍 Raw material search — item ka naam likhein (e.g. copper, 21 number, blades)</label>
+  <div class="row">
+    <input class="grow" type="text" name="q" value="{{ q }}" placeholder="Item / material naam...">
+    <button class="btn" type="submit">Search</button>
+    {% if q %}<a class="btn gray" href="{{ url_for('purchases') }}">✖ Clear</a>{% endif %}
+  </div>
+</form>
+</div>
+{% if q %}
+<div class="card" id="search-results">
+<h3>🔍 "{{ q }}" — {{ results|length }} entries mili</h3>
+{% if results %}
+<table>
+<tr><th>Item</th><th>Party</th><th>Date</th><th class="num">Qty / Kg</th><th class="num">Rate</th><th class="num">Amount</th><th>Purchase</th></tr>
+{% for x in results %}
+<tr>
+<td><b>{{ x.row.name }}</b> {% if x.row.pstatus != 'active' %}<span class="badge b-void">void</span>{% endif %}</td>
+<td>{{ x.row.sname }}</td>
+<td>{{ x.row.pdate }}</td>
+<td class="num">{{ x.qty_disp }}</td>
+<td class="num">{{ x.rate_disp }}</td>
+<td class="num">{{ x.row.amount|rs }}</td>
+<td>{% if x.row.pstatus == 'active' %}<a class="link" href="{{ url_for('purchase_edit', pid=x.row.purchase_id) }}">{{ x.row.purchase_id }}</a>{% else %}{{ x.row.purchase_id }}{% endif %}</td>
+</tr>
+{% endfor %}
+</table>
+{% else %}
+<p class="hint">Koi entry nahi mili — "{{ q }}" naam ki koi purchase line nahi hai.</p>
+{% endif %}
+</div>
+{% endif %}
+{% for x in rows %}
+<div class="card" tabindex="0" {% if x.row.status == 'active' %}data-del="{{ url_for('purchase_delete', pid=x.row.id) }}"{% endif %}>
+  <div class="row">
+    <div class="grow"><b>{{ x.row.id }}</b> · {{ x.row.date }} · <b>{{ x.row.sname }}</b>
+    {% if x.row.mode == 'kg' %}<span class="badge b-credit">Per KG</span>{% else %}<span class="badge b-cash">Per Piece</span>{% endif %}
+    {% if x.row.status == 'voided' %}<span class="badge b-void">VOID — {{ x.row.void_reason }}</span>{% endif %}
+    <br><small>{{ x.summary }}</small>
+    {% if x.row.notes %}<br><small class="hint">📝 {{ x.row.notes }}</small>{% endif %}
+    </div>
+  </div>
+  <table>
+  <tr><td>Total kg</td><td class="num"><b>{{ x.row.total_kg|qty }}</b></td>
+      <td>Amount</td><td class="num"><b>{{ x.row.amount|rs }}</b></td></tr>
+  <tr><td>Cash diya{% if x.row.cash_method_name %} ({{ x.row.cash_method_name }}){% endif %}</td><td class="num">{{ x.row.cash_paid|rs }}</td>
+      <td>Bakaya</td><td class="num neg"><b>{{ x.bakaya|rs }}</b></td></tr>
+  </table>
+  {% if x.row.status == 'active' %}
+  <div class="mt">
+    <a class="btn small green" href="{{ url_for('payment_add', supplier_id=x.row.supplier_id, purchase_id=x.row.id) }}">💸 Payment</a>
+    <a class="btn small gray" href="{{ url_for('purchase_edit', pid=x.row.id) }}">✏️ Edit</a>
+    <a class="btn small gray" href="{{ url_for('purchase_void', pid=x.row.id) }}">🚫 Void</a>
+    <form method="post" action="{{ url_for('purchase_delete', pid=x.row.id) }}" style="display:inline" onsubmit="return confirm('Purchase delete kar dein? Stock bhi wapas ho jayega.')">
+      <button class="btn small red" type="submit">🗑 Delete</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="mt">
+    <form method="post" action="{{ url_for('purchase_delete', pid=x.row.id) }}" style="display:inline" onsubmit="return confirm('Voided purchase delete kar dein?')">
+      <button class="btn small red" type="submit">🗑 Delete</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="card">Koi purchase nahi.</div>
+{% endfor %}
+{% endblock %}

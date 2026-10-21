@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block t %}Stock adjust{% endblock %}{% block body %}
+<div class="card">
+<h3>⚖️ Stock adjustment (correction)</h3>
+<div class="hint">Qty <b>+</b> likhein to barhega, <b>−</b> likhein to ghatega. Wajah lazmi hai (audit mein save hogi).</div>
+<form method="post" class="entry-form">
+<label>Item *</label>
+<select name="material_id" required>
+  <option value="">— item chunein —</option>
+  {% for m in mats %}<option value="{{ m.id }}">{{ m.name }} ({{ m.unit }})</option>{% endfor %}
+</select>
+<label>Qty (+/-) *</label>
+<input name="qty" type="number" step="any" required placeholder="e.g. 5 ya -3">
+<label>Date</label>
+<input name="date" type="date" value="{{ today }}">
+<label>Wajah *</label>
+<textarea name="reason" rows="2" required></textarea>
+<button class="btn green" type="submit">💾 Save adjustment</button>
+<a class="btn gray" data-cancel href="{{ url_for('stock') }}">Cancel</a>
+</form>
+</div>
+{% endblock %}

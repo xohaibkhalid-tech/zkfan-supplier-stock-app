@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block t %}Stock{% endblock %}{% block body %}
+<div class="card">
+<div class="row"><h3 class="grow">📦 Factory Stock</h3>
+<a class="btn small green" href="{{ url_for('usage_add') }}">➖ Usage entry</a></div>
+<div class="hint">Sirf wohi items jo purchases mein aye hain. Item par click karein — poori history khul jayegi.{% if is_owner %} Excel: <a class="link" href="{{ url_for('export_xlsx', name='stock') }}">stock.xlsx</a> · <a class="link" href="{{ url_for('stock_adjust') }}">⚖️ Stock adjust</a>{% endif %}</div>
+</div>
+<div class="card">
+<table>
+<tr><th>Item</th><th class="num">Aaya</th><th class="num">Use hua</th><th class="num">Bacha hua</th><th></th></tr>
+{% for x in rows %}
+<tr><td><b>{{ x.name }}</b> {% if x.low %}<span class="badge b-low">LOW</span>{% endif %}</td>
+<td class="num">{% if x.in_qty %}{{ x.in_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.in_kg|qty }} kg{% endif %}</td>
+<td class="num">{% if x.out_qty %}{{ x.out_qty|qty }} pcs{% endif %}{% if x.out_qty and x.out_kg %} · {% endif %}{% if x.out_kg %}{{ x.out_kg|qty }} kg{% endif %}{% if not x.out_qty and not x.out_kg %}—{% endif %}</td>
+<td class="num"><b>{% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</b></td>
+<td class="num"><a class="link" href="{{ url_for('material_ledger', item=x.name) }}">History</a></td></tr>
+{% else %}
+<tr><td colspan="5">Abhi koi purchased item nahi — pehli purchase se stock banna shuru hoga.</td></tr>
+{% endfor %}
+</table>
+</div>
+{% endblock %}
