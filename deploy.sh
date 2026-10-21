@@ -6,11 +6,12 @@
 set -e
 cd "$(dirname "$0")"
 BASE="https://raw.githubusercontent.com/xohaibkhalid-tech/zkfan-supplier-stock-app/main"
-wget -q -O deploy-files.txt "$BASE/deploy-files.txt"
+CB="?v=$(date +%s)"
+wget -q -O deploy-files.txt "$BASE/deploy-files.txt$CB"
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   mkdir -p "$(dirname "$f")"
-  if wget -q -O "$f.tmpdl" "$BASE/$f"; then
+  if wget -q -O "$f.tmpdl" "$BASE/$f$CB"; then
     mv "$f.tmpdl" "$f"
   else
     echo "FAILED: $f"
