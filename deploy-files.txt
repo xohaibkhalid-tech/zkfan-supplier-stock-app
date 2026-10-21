@@ -4,8 +4,6 @@ seed.py
 cashbook_link.py
 drive_backup_stub.py
 requirements.txt
-deploy.sh
-deploy-files.txt
 tools/import_forms.py
 templates/adjust_form.html
 templates/base.html
