@@ -1,11 +1,11 @@
 {% extends "base.html" %}{% block t %}Home{% endblock %}{% block body %}
 <div class="grid2 mt">
-  <div class="kpi"><div class="lbl">PREVIOUS BAKAYA (purana balance)</div><div class="v neg">{{ total_prev|rs }}</div></div>
-  <div class="kpi"><div class="lbl">CURRENT BAKAYA (nayi purchases)</div><div class="v neg">{{ total_cur|rs }}</div></div>
+  <div class="kpi prev"><div class="lbl">PREVIOUS BAKAYA (purana balance)</div><div class="v neg">{{ total_prev|rs }}</div></div>
+  <div class="kpi cur"><div class="lbl">CURRENT BAKAYA (nayi purchases)</div><div class="v neg">{{ total_cur|rs }}</div></div>
 </div>
 <div class="grid2 mt">
-  <div class="kpi"><div class="lbl">KUL BAKAYA (parties ko dena hai)</div><div class="v neg">{{ total_due|rs }}</div></div>
-  <div class="kpi"><div class="lbl">ADVANCE (parties ke paas hamara)</div><div class="v">{{ total_adv|rs }}</div></div>
+  <div class="kpi kul"><div class="lbl">KUL BAKAYA (parties ko dena hai)</div><div class="v neg">{{ total_due|rs }}</div></div>
+  <div class="kpi adv"><div class="lbl">ADVANCE (parties ke paas hamara)</div><div class="v">{{ total_adv|rs }}</div></div>
 </div>
 
 <div class="row mt">

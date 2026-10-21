@@ -51,12 +51,12 @@ def retry_pending():
 def queue_counts():
     con = _connect()
     try:
-        p = con.execute(
-            "SELECT COUNT(*) FROM cashbook_sync WHERE status='pending'"
-        ).fetchone()[0]
-        f = con.execute(
-            "SELECT COUNT(*) FROM cashbook_sync WHERE status='failed'"
-        ).fetchone()[0]
-        return p, f
+        row = con.execute(
+            "SELECT"
+            " COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),"
+            " COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0)"
+            " FROM cashbook_sync"
+        ).fetchone()
+        return row[0] or 0, row[1] or 0
     finally:
         con.close()

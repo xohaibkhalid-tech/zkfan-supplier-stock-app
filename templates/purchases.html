@@ -10,17 +10,17 @@ Excel: <a class="link" href="{{ url_for('export_xlsx', name='purchases') }}">pur
 Shortcut: kisi card par click karke select karein, <b>Delete</b> key = delete.
 </div>
 <form method="get" action="{{ url_for('purchases') }}" class="mt">
-  <label>🔍 Raw material search — item ka naam likhein (e.g. copper, 21 number, blades)</label>
-  <div class="row">
-    <input class="grow" type="text" name="q" value="{{ q }}" placeholder="Item / material naam...">
-    <button class="btn" type="submit">Search</button>
-    {% if q %}<a class="btn gray" href="{{ url_for('purchases') }}">✖ Clear</a>{% endif %}
+  <label>🔍 Raw material search</label>
+  <div class="searchbar">
+    <input class="search-input" type="text" name="q" value="{{ q }}" placeholder="Item ka naam likhein — e.g. copper, 21 number, blades">
+    <button class="btn search-btn" type="submit">🔍 Search</button>
   </div>
 </form>
 </div>
 {% if q %}
 <div class="card" id="search-results">
-<h3>🔍 "{{ q }}" — {{ results|length }} entries mili</h3>
+<div class="row"><h3 class="grow">🔍 "{{ q }}" — {{ results|length }} entries mili</h3>
+<a class="link" href="{{ url_for('purchases') }}">✕ Search clear karein</a></div>
 {% if results %}
 <table>
 <tr><th>Item</th><th>Party</th><th>Date</th><th class="num">Qty / Kg</th><th class="num">Rate</th><th class="num">Amount</th><th>Purchase</th></tr>
@@ -40,7 +40,7 @@ Shortcut: kisi card par click karke select karein, <b>Delete</b> key = delete.
 <p class="hint">Koi entry nahi mili — "{{ q }}" naam ki koi purchase line nahi hai.</p>
 {% endif %}
 </div>
-{% endif %}
+{% else %}
 {% for x in rows %}
 <div class="card" tabindex="0" {% if x.row.status == 'active' %}data-del="{{ url_for('purchase_delete', pid=x.row.id) }}"{% endif %}>
   <div class="row">
@@ -77,4 +77,5 @@ Shortcut: kisi card par click karke select karein, <b>Delete</b> key = delete.
 {% else %}
 <div class="card">Koi purchase nahi.</div>
 {% endfor %}
+{% endif %}
 {% endblock %}

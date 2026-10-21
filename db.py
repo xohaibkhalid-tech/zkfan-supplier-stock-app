@@ -20,7 +20,7 @@ import sqlite3
 import threading
 from datetime import datetime, date
 
-VERSION = "v2.1-split-a"
+VERSION = "v2.2-polish-a"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get(
@@ -174,7 +174,30 @@ CREATE TABLE IF NOT EXISTS audit (
   entity_id TEXT,
   detail TEXT
 );
+CREATE TABLE IF NOT EXISTS item_aliases (
+  variant TEXT PRIMARY KEY,
+  canonical TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS item_labels (
+  canonical TEXT PRIMARY KEY,
+  label TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS item_groups (
+  canonical TEXT PRIMARY KEY,
+  group_name TEXT NOT NULL
+);
 """
+
+_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_payments_supplier_status"
+    " ON payments(supplier_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_purchases_supplier_status"
+    " ON purchases(supplier_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_purchase_lines_purchase"
+    " ON purchase_lines(purchase_id)",
+    "CREATE INDEX IF NOT EXISTS idx_stock_ledger_material_type"
+    " ON stock_ledger(material_id, type)",
+]
 
 # Columns added in v2 (name -> ALTER fragment) so a live v1 DB migrates
 # in place without losing a single row.
@@ -204,11 +227,17 @@ def _connect():
     con = sqlite3.connect(DB_PATH, timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL;")
+    con.execute("PRAGMA synchronous=NORMAL;")
     con.execute("PRAGMA foreign_keys=ON;")
     return con
 
 
 def _migrate(con):
+    for stmt in _INDEXES:
+        try:
+            con.execute(stmt)
+        except Exception:
+            pass
     for table, cols in _MIGRATIONS.items():
         try:
             existing = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
@@ -234,8 +263,22 @@ def _migrate(con):
 def init_db():
     con = _connect()
     try:
+        existed = {r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
         con.executescript(SCHEMA)
         _migrate(con)
+        if "item_aliases" not in existed:
+            # One-time seed (v2.2, the user's own words): the copper wire
+            # bought as 'hi star 21 number' IS '21 number' — one material,
+            # display label '21 Number Copper Wire'. Seeded only when the
+            # table is first created, so an owner's later Unmerge sticks.
+            con.execute(
+                "INSERT OR IGNORE INTO item_aliases (variant, canonical)"
+                " VALUES ('hi star 21 number', '21 number')")
+            con.execute(
+                "INSERT OR IGNORE INTO item_labels (canonical, label)"
+                " VALUES ('21 number', '21 Number Copper Wire')")
+        _seed_item_groups(con)
         con.commit()
     finally:
         con.close()
@@ -382,10 +425,12 @@ def compute_line(kind, name="", qty=0, rate=0, body_qty=0, body_wt=0,
 
 # ---------- balances (v2 formula) ----------
 
-def purchase_bakaya(purchase_id):
+def purchase_bakaya(purchase_id, con=None):
     """What is still owed on one purchase: amount - header cash - linked
-    later payments (amount+discount)."""
-    con = _connect()
+    later payments (amount+discount). Pass a shared connection on hot
+    paths; otherwise a private one is opened (and closed)."""
+    own = con is None
+    con = con or _connect()
     try:
         p = con.execute("SELECT amount, cash_paid FROM purchases WHERE id=?",
                         (purchase_id,)).fetchone()
@@ -399,10 +444,30 @@ def purchase_bakaya(purchase_id):
         ).fetchone()[0] or 0
         return (p["amount"] or 0) - (p["cash_paid"] or 0) - linked
     finally:
-        con.close()
+        if own:
+            con.close()
 
 
-def party_balances(supplier_id):
+def _split_from(opening, prev_paid, current_paid, advance_paid, gross):
+    """The v2.1 split math, shared by party_balances() (single party) and
+    all_party_balances() (bulk) so both always agree to the paisa."""
+    prev_remaining = max(0.0, opening - prev_paid)
+    spill = max(0.0, prev_paid - opening)
+    current_bakaya = gross - current_paid - spill - advance_paid
+    return {
+        "opening": opening,
+        "prev_paid": prev_paid,
+        "prev_remaining": prev_remaining,
+        "spill": spill,
+        "purchase_bakaya_gross": gross,
+        "current_paid": current_paid,
+        "advance_paid": advance_paid,
+        "current_bakaya": current_bakaya,
+        "total": prev_remaining + current_bakaya,
+    }
+
+
+def party_balances(supplier_id, con=None):
     """Previous / Current split of one party's outstanding — the single
     source of truth for every balance display (v2.1).
 
@@ -416,8 +481,12 @@ def party_balances(supplier_id):
 
     total = prev_remaining + current_bakaya always equals the old v2
     formula: opening - SUM(payment+advance rows) + SUM(purchase bakaya).
+
+    Pass a shared connection on hot paths (dashboard, lists); otherwise
+    a private one is opened (and closed).
     """
-    con = _connect()
+    own = con is None
+    con = con or _connect()
     try:
         s = con.execute(
             "SELECT opening_balance FROM suppliers WHERE id=?", (supplier_id,)
@@ -442,21 +511,58 @@ def party_balances(supplier_id):
             (supplier_id,),
         ).fetchone()[0] or 0
     finally:
-        con.close()
-    prev_remaining = max(0.0, opening - prev_paid)
-    spill = max(0.0, prev_paid - opening)
-    current_bakaya = gross - current_paid - spill - advance_paid
-    return {
-        "opening": opening,
-        "prev_paid": prev_paid,
-        "prev_remaining": prev_remaining,
-        "spill": spill,
-        "purchase_bakaya_gross": gross,
-        "current_paid": current_paid,
-        "advance_paid": advance_paid,
-        "current_bakaya": current_bakaya,
-        "total": prev_remaining + current_bakaya,
-    }
+        if own:
+            con.close()
+    return _split_from(opening, prev_paid, current_paid, advance_paid, gross)
+
+
+def all_party_balances(con=None, openings=None):
+    """party_balances() for EVERY supplier in a constant number of
+    grouped queries (v2.2 perf fix — the dashboard used to call
+    party_balances() once per party: ~5 queries x N parties, each on its
+    own connection, which cost ~6s on the live server's slow disk).
+
+    Returns {supplier_id: balances-dict} identical in shape and values
+    to party_balances(). `openings` may carry {id: opening_balance}
+    fetched already by the caller (saves one query).
+    """
+    own = con is None
+    con = con or _connect()
+    try:
+        if openings is None:
+            openings = {r["id"]: (r["opening_balance"] or 0) for r in
+                        con.execute("SELECT id, opening_balance"
+                                    " FROM suppliers").fetchall()}
+        paid = {}
+        for r in con.execute(
+                "SELECT supplier_id, kind,"
+                " COALESCE(applies_to,'previous') AS ap,"
+                " COALESCE(SUM(amount + discount),0) AS s"
+                " FROM payments WHERE status='active'"
+                " AND kind IN ('payment','advance')"
+                " GROUP BY supplier_id, kind, ap").fetchall():
+            d = paid.setdefault(r["supplier_id"],
+                                {"previous": 0.0, "current": 0.0,
+                                 "advance": 0.0})
+            if r["kind"] == "advance":
+                d["advance"] += r["s"] or 0
+            else:
+                d[r["ap"] if r["ap"] in ("previous", "current")
+                  else "previous"] += r["s"] or 0
+        gross = {r["supplier_id"]: (r["g"] or 0) for r in con.execute(
+            "SELECT supplier_id,"
+            " COALESCE(SUM(amount - cash_paid),0) AS g"
+            " FROM purchases WHERE status='active'"
+            " GROUP BY supplier_id").fetchall()}
+    finally:
+        if own:
+            con.close()
+    out = {}
+    for sid, opening in openings.items():
+        d = paid.get(sid, {"previous": 0.0, "current": 0.0, "advance": 0.0})
+        out[sid] = _split_from(opening, d["previous"], d["current"],
+                               d["advance"], gross.get(sid, 0.0))
+    return out
 
 
 def party_outstanding(supplier_id):
@@ -473,10 +579,41 @@ def supplier_balance(supplier_id):
 def total_outstanding():
     con = _connect()
     try:
-        rows = con.execute("SELECT id FROM suppliers WHERE active=1").fetchall()
+        openings = {r["id"]: (r["opening_balance"] or 0) for r in con.execute(
+            "SELECT id, opening_balance FROM suppliers"
+            " WHERE active=1").fetchall()}
+        bals = all_party_balances(con, openings)
     finally:
         con.close()
-    return sum(party_outstanding(r["id"]) for r in rows)
+    return sum(b["total"] for b in bals.values())
+
+
+def all_material_stocks(con=None, openings=None):
+    """material_stock() for every material in 1-2 grouped queries
+    (v2.2 perf fix — the dashboard used to loop material_stock() per
+    material: 4 queries + a fresh connection each). `openings` may carry
+    {material_id: opening_stock} fetched already by the caller."""
+    own = con is None
+    con = con or _connect()
+    try:
+        if openings is None:
+            openings = {r["id"]: (r["opening_stock"] or 0) for r in
+                        con.execute("SELECT id, opening_stock"
+                                    " FROM materials").fetchall()}
+        moves = {}
+        for r in con.execute(
+                "SELECT material_id, type, COALESCE(SUM(qty),0) AS q"
+                " FROM stock_ledger GROUP BY material_id, type").fetchall():
+            moves.setdefault(r["material_id"], {})[r["type"]] = r["q"] or 0
+    finally:
+        if own:
+            con.close()
+    out = {}
+    for mid, opening in openings.items():
+        mm = moves.get(mid, {})
+        out[mid] = opening + mm.get("IN", 0) - mm.get("OUT", 0) \
+            + mm.get("ADJUST", 0)
+    return out
 
 
 def total_payable():
@@ -608,60 +745,321 @@ def sync_purchase_stock(purchase, entered_by):
                            f"Purchase {purchase['id']}")
 
 
-# ---------- stock list (v2.1: purchased items ONLY) ----------
+# ---------- stock list (v2.1: purchased items ONLY; v2.2: canonical) ---
 
-def purchased_items():
-    """The stock list, recomputed from purchase_lines of ACTIVE purchases
-    grouped by trimmed item name (case-insensitive). An item appears ONLY
-    if it was actually purchased — legacy materials-table rows with no
-    purchase history (v1 seed names, manual items) never appear, and no
-    data is deleted; this is display/source logic only.
+def _norm_name(name):
+    """Canonical text form of an item name: lower, trimmed, internal
+    whitespace collapsed — 'Copper Wire X ' and 'copper  wire x' are the
+    same variant."""
+    return " ".join((name or "").split()).lower()
 
-    Usage (OUT) and corrections (ADJUST) come from stock_ledger via the
-    material that shares the item name — the ledger's qty counts against
-    pcs when that material's unit is 'pcs', otherwise against kg.
-    """
+
+def _alias_map(con):
+    try:
+        return {r["variant"]: r["canonical"] for r in con.execute(
+            "SELECT variant, canonical FROM item_aliases").fetchall()}
+    except Exception:
+        return {}
+
+
+def _label_map(con):
+    try:
+        return {r["canonical"]: r["label"] for r in con.execute(
+            "SELECT canonical, label FROM item_labels").fetchall()}
+    except Exception:
+        return {}
+
+
+def _group_map(con):
+    try:
+        return {r["canonical"]: r["group_name"] for r in con.execute(
+            "SELECT canonical, group_name FROM item_groups").fetchall()}
+    except Exception:
+        return {}
+
+
+def canonical_of(name, aliases=None):
+    """Canonical key for a line/material name: its alias target when one
+    is set, else its own normalized form."""
+    n = _norm_name(name)
+    if aliases and n in aliases:
+        return aliases[n]
+    return n
+
+
+# Stock groups (v2.2): fixed display order + keyword default rules.
+GROUP_ORDER = ["Boxes & Packaging", "Copper Wire", "Dhalai (Models)",
+               "Blades", "Kits", "Bearings", "Canopy",
+               "Electric Sheet & Parts", "Hardware", "Other"]
+
+_GROUP_RULES = [
+    (("dabb", "box", "carton"), "Boxes & Packaging"),
+    (("number", "wire", "copper"), "Copper Wire"),
+    (("bearing",), "Bearings"),
+    (("kit", "acdc"), "Kits"),
+    (("conopy", "canopy", "nutt"), "Canopy"),
+    (("blade", "shenk"), "Blades"),
+    (("flash", "magnum", "silk", "tycon", "wifi", "crown", "king"),
+     "Dhalai (Models)"),
+    (("excel", "armature", "sheet"), "Electric Sheet & Parts"),
+    (("nakka", "jain", "insolation"), "Hardware"),
+]
+
+
+def default_group_for(canonical_key):
+    """Keyword default group for a canonical item name (priority order
+    as listed in _GROUP_RULES); unmatched items land in 'Other'."""
+    k = canonical_key or ""
+    for words, group in _GROUP_RULES:
+        if any(w in k for w in words):
+            return group
+    return "Other"
+
+
+def _seed_item_groups(con):
+    """Assign keyword-default groups to canonical stock items that have
+    no group yet (INSERT OR IGNORE — an owner's later move sticks)."""
+    try:
+        aliases = _alias_map(con)
+        assigned = _group_map(con)
+        names = con.execute(
+            "SELECT DISTINCT pl.name AS name FROM purchase_lines pl"
+            " JOIN purchases p ON p.id = pl.purchase_id"
+            " WHERE p.status='active' AND TRIM(pl.name) <> ''").fetchall()
+        for r in names:
+            ck = canonical_of(r["name"], aliases)
+            if ck and ck not in assigned:
+                con.execute(
+                    "INSERT OR IGNORE INTO item_groups (canonical,"
+                    " group_name) VALUES (?,?)",
+                    (ck, default_group_for(ck)))
+                assigned[ck] = default_group_for(ck)
+    except Exception:
+        pass
+
+
+def set_alias(variant_norm, canonical_key):
     con = _connect()
     try:
+        con.execute(
+            "INSERT INTO item_aliases (variant, canonical) VALUES (?,?)"
+            " ON CONFLICT(variant) DO UPDATE SET canonical=excluded.canonical",
+            (_norm_name(variant_norm), canonical_key))
+        con.commit()
+    finally:
+        con.close()
+
+
+def delete_alias(variant_norm):
+    con = _connect()
+    try:
+        con.execute("DELETE FROM item_aliases WHERE variant=?",
+                    (_norm_name(variant_norm),))
+        con.commit()
+    finally:
+        con.close()
+
+
+def list_aliases(con=None, items=None):
+    """[{variant, canonical, target_name}] for the Stock page's merged
+    items card; target_name is the target item's display label. Pass
+    `items` (a purchased_items() result) to avoid recomputing it."""
+    own = con is None
+    con = con or _connect()
+    try:
         rows = con.execute(
-            "SELECT lower(TRIM(pl.name)) AS k, TRIM(pl.name) AS name,"
-            " pl.kind AS kind, COALESCE(SUM(pl.qty),0) AS q,"
-            " COALESCE(SUM(pl.weight_kg),0) AS kg"
+            "SELECT variant, canonical FROM item_aliases"
+            " ORDER BY variant").fetchall()
+        labels = _label_map(con)
+    finally:
+        if own:
+            con.close()
+    names = {}
+    if rows:
+        if items is None:
+            items = purchased_items()
+        names = {it["key"]: it["name"] for it in items}
+    return [{"variant": r["variant"], "canonical": r["canonical"],
+             "target_name": names.get(r["canonical"])
+             or labels.get(r["canonical"]) or r["canonical"]}
+            for r in rows]
+
+
+def set_label(canonical_key, label):
+    label = (label or "").strip()
+    con = _connect()
+    try:
+        if label:
+            con.execute(
+                "INSERT INTO item_labels (canonical, label) VALUES (?,?)"
+                " ON CONFLICT(canonical) DO UPDATE SET"
+                " label=excluded.label",
+                (canonical_key, label))
+        else:
+            con.execute("DELETE FROM item_labels WHERE canonical=?",
+                        (canonical_key,))
+        con.commit()
+    finally:
+        con.close()
+
+
+def set_item_group(canonical_key, group_name):
+    group_name = (group_name or "").strip()
+    if not group_name:
+        return
+    con = _connect()
+    try:
+        con.execute(
+            "INSERT INTO item_groups (canonical, group_name) VALUES (?,?)"
+            " ON CONFLICT(canonical) DO UPDATE SET"
+            " group_name=excluded.group_name",
+            (canonical_key, group_name))
+        con.commit()
+    finally:
+        con.close()
+
+
+def merge_items(src_key, dst_key):
+    """Merge canonical item src into dst (stock display only — purchase
+    lines are never touched): every variant name of src gets an alias to
+    dst, aliases that pointed at src are repointed, src's label row is
+    dropped (dst keeps its own label)."""
+    if not src_key or not dst_key or src_key == dst_key:
+        return False
+    src = purchased_item(src_key)
+    if not src:
+        return False
+    con = _connect()
+    try:
+        for original in src["variants"]:
+            con.execute(
+                "INSERT INTO item_aliases (variant, canonical)"
+                " VALUES (?,?) ON CONFLICT(variant) DO UPDATE SET"
+                " canonical=excluded.canonical",
+                (_norm_name(original), dst_key))
+        con.execute(
+            "UPDATE item_aliases SET canonical=? WHERE canonical=?",
+            (dst_key, src_key))
+        con.execute("DELETE FROM item_labels WHERE canonical=?",
+                    (src_key,))
+        con.commit()
+    finally:
+        con.close()
+    return True
+
+
+def purchased_items(con=None):
+    """The stock list, recomputed from purchase_lines of ACTIVE purchases
+    and grouped by CANONICAL item (v2.2): the same material bought under
+    slightly different line names — or merged by the owner through
+    item_aliases — counts as ONE item. Purchase history is never
+    altered; this is stock-display logic only.
+
+    An item appears ONLY if it was actually purchased (legacy
+    materials-table rows with no purchase history never appear).
+    Usage (OUT) and corrections (ADJUST) are summed across the
+    stock_ledger rows of ALL materials whose names belong to the
+    canonical group — a usage entry against the combined item reduces
+    the combined remaining.
+
+    Each item dict: key/canonical, name (display label: explicit label
+    if set, else the most frequent original line name), label (explicit
+    label or ''), variants (original line names), group, unit,
+    material_id (primary material — the one sharing the canonical name,
+    else the most frequent variant's), material_ids, in/out/adj/rem in
+    qty (pcs) and kg, low.
+    """
+    own = con is None
+    con = con or _connect()
+    try:
+        rows = con.execute(
+            "SELECT TRIM(pl.name) AS name, pl.kind AS kind,"
+            " COALESCE(SUM(pl.qty),0) AS q,"
+            " COALESCE(SUM(pl.weight_kg),0) AS kg, COUNT(*) AS n"
             " FROM purchase_lines pl"
             " JOIN purchases p ON p.id = pl.purchase_id"
             " WHERE p.status='active' AND TRIM(pl.name) <> ''"
-            " GROUP BY k, pl.kind").fetchall()
+            " GROUP BY TRIM(pl.name), pl.kind").fetchall()
         mats = con.execute("SELECT * FROM materials").fetchall()
         moves = con.execute(
             "SELECT material_id, type, COALESCE(SUM(qty),0) AS q"
             " FROM stock_ledger GROUP BY material_id, type").fetchall()
+        aliases = _alias_map(con)
+        labels = _label_map(con)
+        groups = _group_map(con)
     finally:
-        con.close()
-    mat_by_name = {}
+        if own:
+            con.close()
+    mat_by_norm = {}
     for m in mats:
-        mat_by_name.setdefault((m["name"] or "").strip().lower(), m)
+        mat_by_norm.setdefault(_norm_name(m["name"]), m)
     mv = {}
     for r in moves:
         mv.setdefault(r["material_id"], {})[r["type"]] = r["q"] or 0
-    items = {}
+
+    # variant (normalized name) -> aggregates + original-name line counts
+    variants = {}
     for r in rows:
-        it = items.setdefault(r["k"], {"key": r["k"], "name": r["name"],
-                                       "in_qty": 0.0, "in_kg": 0.0})
+        vn = _norm_name(r["name"])
+        if not vn:
+            continue
+        v = variants.setdefault(vn, {"counts": {}, "in_qty": 0.0,
+                                     "in_kg": 0.0})
+        v["counts"][r["name"]] = v["counts"].get(r["name"], 0) + (r["n"] or 0)
         if r["kind"] == "piece":
-            it["in_qty"] += r["q"] or 0
+            v["in_qty"] += r["q"] or 0
         elif r["kind"] in ("dhalai", "set", "plain"):
-            it["in_kg"] += r["kg"] or 0
+            v["in_kg"] += r["kg"] or 0
+
+    # canonical key -> merged item
+    items = {}
+    for vn, v in variants.items():
+        ck = aliases.get(vn, vn)
+        it = items.setdefault(ck, {"key": ck, "canonical": ck,
+                                   "in_qty": 0.0, "in_kg": 0.0,
+                                   "_counts": {}, "_variants": set()})
+        it["in_qty"] += v["in_qty"]
+        it["in_kg"] += v["in_kg"]
+        for orig, n in v["counts"].items():
+            it["_counts"][orig] = it["_counts"].get(orig, 0) + n
+            it["_variants"].add(orig)
+
     out = []
-    for k, it in items.items():
+    for ck, it in items.items():
         if it["in_qty"] <= 0 and it["in_kg"] <= 0:
             continue  # no purchase history (e.g. only 'other' lines)
-        m = mat_by_name.get(k)
-        it["material_id"] = m["id"] if m else ""
-        it["unit"] = (m["unit"] if m and m["unit"]
+        # most frequent original line name (deterministic tie-break)
+        best = sorted(it["_counts"].items(),
+                      key=lambda kv: (-kv[1], kv[0].lower()))[0][0]
+        it["variants"] = sorted(it["_variants"])
+        it["label"] = labels.get(ck, "")
+        it["name"] = it["label"] or best
+        # materials of this group (by normalized material name)
+        group_mats = []
+        seen_mid = set()
+        for vn, v in variants.items():
+            if aliases.get(vn, vn) != ck:
+                continue
+            m = mat_by_norm.get(vn)
+            if m and m["id"] not in seen_mid:
+                group_mats.append(m)
+                seen_mid.add(m["id"])
+        primary = mat_by_norm.get(ck)
+        if primary is None and group_mats:
+            # most frequent variant's material
+            for orig in sorted(it["_counts"].items(),
+                               key=lambda kv: (-kv[1], kv[0].lower())):
+                primary = mat_by_norm.get(_norm_name(orig[0]))
+                if primary:
+                    break
+        it["material_id"] = primary["id"] if primary else ""
+        it["material_ids"] = [m["id"] for m in group_mats]
+        it["unit"] = (primary["unit"] if primary and primary["unit"]
                       else ("pcs" if it["in_qty"] else "kg"))
-        mm = mv.get(it["material_id"], {}) if m else {}
-        used = mm.get("OUT", 0) or 0
-        adj = mm.get("ADJUST", 0) or 0
+        used = sum((mv.get(m["id"], {}).get("OUT", 0) or 0)
+                   for m in group_mats)
+        adj = sum((mv.get(m["id"], {}).get("ADJUST", 0) or 0)
+                  for m in group_mats)
         it["out_qty"] = used if it["unit"] == "pcs" else 0.0
         it["out_kg"] = 0.0 if it["unit"] == "pcs" else used
         it["adj_qty"] = adj if it["unit"] == "pcs" else 0.0
@@ -669,19 +1067,54 @@ def purchased_items():
         it["rem_qty"] = it["in_qty"] - it["out_qty"] + it["adj_qty"]
         it["rem_kg"] = it["in_kg"] - it["out_kg"] + it["adj_kg"]
         rem_primary = it["rem_qty"] if it["unit"] == "pcs" else it["rem_kg"]
-        it["low"] = bool(m and m["min_level"]
-                         and rem_primary < m["min_level"])
+        it["low"] = bool(primary and primary["min_level"]
+                         and rem_primary < primary["min_level"])
+        it["group"] = groups.get(ck) or default_group_for(ck)
+        del it["_counts"], it["_variants"]
         out.append(it)
     out.sort(key=lambda x: x["name"].lower())
     return out
 
 
-def purchased_item(name):
-    """One purchased item by name (case-insensitive), or None."""
-    key = (name or "").strip().lower()
-    if not key:
+def purchased_item(name, con=None):
+    """One canonical purchased item, resolved flexibly: by canonical
+    key, by display label, by alias variant, or by any original line
+    name (all case/space-insensitive). None when not purchased."""
+    n = _norm_name(name)
+    if not n:
         return None
-    for it in purchased_items():
-        if it["key"] == key:
+    items = purchased_items(con=con)
+    for it in items:
+        if it["key"] == n:
+            return it
+    for it in items:
+        if _norm_name(it["name"]) == n:
+            return it
+    own = con is None
+    con = con or _connect()
+    try:
+        aliases = _alias_map(con)
+    finally:
+        if own:
+            con.close()
+    ck = aliases.get(n, n)
+    for it in items:
+        if it["key"] == ck:
             return it
     return None
+
+
+def stock_groups(items=None, con=None):
+    """purchased_items() organised into the fixed group order (unknown
+    groups after, alphabetical), each with item count + remaining
+    totals for the Stock page's accordion summaries."""
+    if items is None:
+        items = purchased_items(con=con)
+    by = {}
+    for it in items:
+        by.setdefault(it["group"], []).append(it)
+    names = [g for g in GROUP_ORDER if g in by] \
+        + sorted(g for g in by if g not in GROUP_ORDER)
+    return [{"name": n, "rows": by[n], "count": len(by[n]),
+             "rem_qty": sum(i["rem_qty"] for i in by[n]),
+             "rem_kg": sum(i["rem_kg"] for i in by[n])} for n in names]

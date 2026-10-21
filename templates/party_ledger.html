@@ -8,7 +8,7 @@
     <div class="num">
       <div class="lbl">OUTSTANDING</div>
       {% if balance < 0 %}
-      <div class="big-num" style="color:#1F4E79">{{ (-balance)|rs }}</div>
+      <div class="big-num">{{ (-balance)|rs }}</div>
       <span class="badge b-adv">ADVANCE — party ke paas hamara advance hai</span>
       {% else %}
       <div class="big-num neg">{{ balance|rs }}</div>
@@ -25,13 +25,13 @@
 </div>
 
 <div class="grid2 mt">
-  <div class="kpi">
+  <div class="kpi prev">
     <div class="lbl">PREVIOUS BALANCE (purana)</div>
     <div class="hint">Opening: {{ split.opening|rs }} · Paid: {{ split.prev_paid|rs }}</div>
     <div class="v neg">{{ split.prev_remaining|rs }}</div>
     <div class="hint">baqi previous</div>
   </div>
-  <div class="kpi">
+  <div class="kpi cur">
     <div class="lbl">CURRENT (nayi purchases)</div>
     <div class="hint">Purchases bakaya: {{ split.purchase_bakaya_gross|rs }} · Paid: {{ (split.current_paid + split.spill + split.advance_paid)|rs }}{% if split.spill or split.advance_paid %} <span title="Previous se spill + advance shamil hai">(incl. spill/advance)</span>{% endif %}</div>
     <div class="v neg">{{ split.current_bakaya|rs }}</div>

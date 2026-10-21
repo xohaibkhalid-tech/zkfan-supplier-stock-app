@@ -21,19 +21,20 @@ from datetime import date
 from functools import wraps
 
 from flask import (Flask, request, redirect, url_for, session, render_template,
-                   flash, jsonify, send_file, abort)
+                   flash, jsonify, send_file, abort, g)
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import db
 from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 party_outstanding, party_balances, total_outstanding,
+                all_party_balances, all_material_stocks,
                 purchase_bakaya, material_stock, get_or_create_material,
                 post_stock, compute_line, sync_purchase_stock,
                 clear_purchase_stock, list_methods, method_by_id,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v2.1-split-a"
+VERSION = db.VERSION  # "v2.2-polish-a"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SUPPLIER_STOCK_SECRET", "dev-only-change-me")
@@ -122,15 +123,30 @@ def current_user():
     if os.environ.get("SUPPLIER_STOCK_NO_AUTH") == "1":
         return {"id": 0, "username": OWNER_USER, "role": "owner",
                 "must_change_pw": 0, "active": 1}
-    uid = session.get("uid")
-    if not uid:
-        return None
-    con = _connect()
+    # v2.2 perf: cached on flask.g — the auth decorator, the context
+    # processor and the route used to run this users-table query ~3x per
+    # request (each on its own connection).
     try:
-        return con.execute(
-            "SELECT * FROM users WHERE id=? AND active=1", (uid,)).fetchone()
-    finally:
-        con.close()
+        if "_cu_loaded" in g:
+            return g._cu
+    except RuntimeError:
+        pass
+    uid = session.get("uid")
+    u = None
+    if uid:
+        con = _connect()
+        try:
+            u = con.execute(
+                "SELECT * FROM users WHERE id=? AND active=1",
+                (uid,)).fetchone()
+        finally:
+            con.close()
+    try:
+        g._cu = u
+        g._cu_loaded = True
+    except RuntimeError:
+        pass
+    return u
 
 
 def login_required(f):
@@ -176,14 +192,47 @@ def _supplier_name(sid):
         con.close()
 
 
-def _lines_of(pid):
-    con = _connect()
+def _lines_of(pid, con=None):
+    own = con is None
+    con = con or _connect()
     try:
         return con.execute(
             "SELECT * FROM purchase_lines WHERE purchase_id=?"
             " ORDER BY sort, id", (pid,)).fetchall()
     finally:
-        con.close()
+        if own:
+            con.close()
+
+
+def _bulk_lines(con, purchase_ids):
+    """All lines for a set of purchases in ONE query (v2.2 perf fix —
+    the list page used to run _lines_of() per purchase, each on its own
+    connection). Returns {purchase_id: [line rows]}."""
+    ids = list(purchase_ids)
+    if not ids:
+        return {}
+    ph = ",".join("?" * len(ids))
+    out = {}
+    for ln in con.execute(
+            f"SELECT * FROM purchase_lines WHERE purchase_id IN ({ph})"
+            " ORDER BY sort, id", ids).fetchall():
+        out.setdefault(ln["purchase_id"], []).append(ln)
+    return out
+
+
+def _bulk_linked(con, purchase_ids):
+    """Linked later payments per purchase in ONE grouped query — the
+    bulk twin of db.purchase_bakaya()'s second query.
+    Returns {purchase_id: SUM(amount+discount)}."""
+    ids = list(purchase_ids)
+    if not ids:
+        return {}
+    ph = ",".join("?" * len(ids))
+    return {r["purchase_id"]: (r["s"] or 0) for r in con.execute(
+        "SELECT purchase_id, COALESCE(SUM(amount + discount),0) AS s"
+        " FROM payments WHERE purchase_id IN (" + ph + ")"
+        " AND status='active' AND kind IN ('payment','advance')"
+        " GROUP BY purchase_id", ids).fetchall()}
 
 
 def lines_summary(lines):
@@ -299,13 +348,20 @@ def dashboard():
             " FROM stock_ledger l JOIN materials m ON m.id=l.material_id"
             " WHERE l.type='OUT' AND l.date >= date('now','-7 days')"
             " GROUP BY m.id ORDER BY used DESC").fetchall()
+        # v2.2 perf: bulk aggregates on THIS connection — the old code
+        # called party_balances()/material_stock() once per row, each
+        # opening its own connection (~269 queries for this page).
+        bals = all_party_balances(
+            con, {s["id"]: (s["opening_balance"] or 0) for s in suppliers})
+        stocks = all_material_stocks(
+            con, {m["id"]: (m["opening_stock"] or 0) for m in materials})
     finally:
         con.close()
 
     sup_rows, total_due, total_adv = [], 0.0, 0.0
     total_prev, total_cur = 0.0, 0.0
     for s in suppliers:
-        bal = party_balances(s["id"])
+        bal = bals[s["id"]]
         sup_rows.append({"row": s, "bal": bal, "out": bal["total"]})
         total_prev += bal["prev_remaining"]
         if bal["current_bakaya"] > 0:
@@ -316,7 +372,7 @@ def dashboard():
             total_adv += -bal["total"]
     mat_rows, low = [], []
     for m in materials:
-        st = material_stock(m["id"])
+        st = stocks.get(m["id"], 0)
         mat_rows.append({"row": m, "stock": st})
         if m["min_level"] and st < m["min_level"]:
             low.append({"row": m, "stock": st})
@@ -343,10 +399,12 @@ def suppliers():
     try:
         rows = con.execute(
             "SELECT * FROM suppliers ORDER BY active DESC, name").fetchall()
+        bals = all_party_balances(
+            con, {r["id"]: (r["opening_balance"] or 0) for r in rows})
     finally:
         con.close()
-    out = [{"row": r, "bal": party_balances(r["id"]),
-            "out": party_outstanding(r["id"])} for r in rows]
+    out = [{"row": r, "bal": bals[r["id"]], "out": bals[r["id"]]["total"]}
+           for r in rows]
     return render_template("suppliers.html", suppliers=out)
 
 
@@ -455,11 +513,13 @@ def supplier_delete(sid):
 
 # ---------- party ledger (owner, print-clean) ----------
 
-def _ledger_rows(s):
+def _ledger_rows(s, con=None):
     """Chronological khata rows for one party with a running outstanding.
     Money math mirrors db.party_outstanding; voided rows are shown struck
-    through and do not move the balance."""
-    con = _connect()
+    through and do not move the balance. Pass a shared connection to keep
+    the whole ledger page on one connection (v2.2)."""
+    own = con is None
+    con = con or _connect()
     try:
         purs = con.execute(
             "SELECT * FROM purchases WHERE supplier_id=?"
@@ -480,7 +540,8 @@ def _ledger_rows(s):
                 " ORDER BY pl.sort, pl.id", (s["id"],)).fetchall():
             lines.setdefault(ln["purchase_id"], []).append(ln)
     finally:
-        con.close()
+        if own:
+            con.close()
 
     rows = []
     bal = s["opening_balance"] or 0
@@ -550,14 +611,15 @@ def supplier_ledger(sid):
     try:
         s = con.execute("SELECT * FROM suppliers WHERE id=?",
                         (sid,)).fetchone()
+        if not s:
+            abort(404)
+        rows, bal = _ledger_rows(s, con)
+        split = party_balances(sid, con)
     finally:
         con.close()
-    if not s:
-        abort(404)
-    rows, bal = _ledger_rows(s)
     return render_template("party_ledger.html", s=s, rows=rows, balance=bal,
-                           outstanding=party_outstanding(sid),
-                           split=party_balances(sid))
+                           outstanding=split["total"],
+                           split=split)
 
 
 # ---------- purchases v2 (owner) ----------
@@ -746,15 +808,22 @@ def purchases():
                                  if r["prate"] else "—")
                 results.append({"row": r, "qty_disp": qty_disp,
                                 "rate_disp": rate_disp})
+        # v2.2 perf: lines + linked payments for the whole list in two
+        # bulk queries on this connection (was: 2 fresh connections and
+        # ~4 queries PER purchase — the ~5s purchases page).
+        lines_map = _bulk_lines(con, [r["id"] for r in rows])
+        linked = _bulk_linked(
+            con, [r["id"] for r in rows if r["status"] == "active"])
     finally:
         con.close()
     out = []
     for r in rows:
-        lines = _lines_of(r["id"])
+        lines = lines_map.get(r["id"], [])
+        bakaya = ((r["amount"] or 0) - (r["cash_paid"] or 0)
+                  - linked.get(r["id"], 0)) if r["status"] == "active" else 0
         out.append({"row": r, "lines": lines,
                     "summary": lines_summary(lines),
-                    "bakaya": purchase_bakaya(r["id"])
-                    if r["status"] == "active" else 0})
+                    "bakaya": bakaya})
     return render_template("purchases.html", rows=out, f=f, q=q,
                            results=results)
 
@@ -1184,7 +1253,77 @@ def method_delete(mid):
 def stock():
     # v2.1: the list is ONLY items that were actually purchased
     # (recomputed from purchase lines — legacy materials never appear).
-    return render_template("stock.html", rows=purchased_items())
+    # v2.2: canonical items (aliases merged), organised into groups.
+    items = purchased_items()
+    groups = db.stock_groups(items)
+    group_names = list(db.GROUP_ORDER) + sorted(
+        {g["name"] for g in groups} - set(db.GROUP_ORDER))
+    return render_template("stock.html", rows=items, groups=groups,
+                           all_items=items, group_names=group_names,
+                           aliases=db.list_aliases(items=items))
+
+
+@app.route("/stock/merge", methods=["POST"])
+@owner_required
+def stock_merge():
+    """Merge one canonical stock item into another (display only —
+    purchase lines stay as they are; reversible via Unmerge)."""
+    u = current_user()
+    src = (request.form.get("variant_key") or "").strip()
+    dst = (request.form.get("target_key") or "").strip()
+    if not src or not dst or src == dst:
+        flash("Merge ke liye do alag items chunein", "err")
+        return redirect(url_for("stock"))
+    target = purchased_item(dst)
+    if not db.merge_items(src, dst):
+        flash("Item nahi mila — merge nahi hua", "err")
+        return redirect(url_for("stock"))
+    audit(u["username"], "merge", "stock_item", src, f"-> {dst}")
+    flash(f"Merge ho gaya: ab ye item '{target['name'] if target else dst}'"
+          " ke saath ginna jayega", "ok")
+    return redirect(url_for("stock"))
+
+
+@app.route("/stock/rename", methods=["POST"])
+@owner_required
+def stock_rename():
+    u = current_user()
+    ck = (request.form.get("canonical_key") or "").strip()
+    label = (request.form.get("label") or "").strip()
+    if not ck or not purchased_item(ck):
+        flash("Item nahi mila", "err")
+        return redirect(url_for("stock"))
+    db.set_label(ck, label)
+    audit(u["username"], "rename", "stock_item", ck, label)
+    flash("Item ka display naam update ho gaya", "ok")
+    return redirect(url_for("stock"))
+
+
+@app.route("/stock/aliases/delete", methods=["POST"])
+@owner_required
+def stock_alias_delete():
+    u = current_user()
+    variant = (request.form.get("variant") or "").strip()
+    db.delete_alias(variant)
+    audit(u["username"], "unmerge", "stock_item", variant, "")
+    flash(f"Unmerge ho gaya: '{variant}' ab alag item hai", "ok")
+    return redirect(url_for("stock"))
+
+
+@app.route("/stock/move-group", methods=["POST"])
+@owner_required
+def stock_move_group():
+    u = current_user()
+    ck = (request.form.get("canonical_key") or "").strip()
+    group = (request.form.get("new_group") or "").strip() \
+        or (request.form.get("group_name") or "").strip()
+    if not ck or not group or not purchased_item(ck):
+        flash("Item ya group nahi mila", "err")
+        return redirect(url_for("stock"))
+    db.set_item_group(ck, group)
+    audit(u["username"], "group", "stock_item", ck, group)
+    flash(f"Item '{group}' group mein chala gaya", "ok")
+    return redirect(url_for("stock"))
 
 
 @app.route("/stock/<path:item>")
@@ -1200,26 +1339,36 @@ def material_ledger(item):
                             (item,)).fetchone()
         finally:
             con.close()
-        if m and purchased_item(m["name"]):
-            return redirect(url_for("material_ledger", item=m["name"]))
+        if m:
+            resolved = purchased_item(m["name"])
+            if resolved:
+                return redirect(url_for("material_ledger",
+                                        item=resolved["name"]))
         abort(404)
     con = _connect()
     try:
+        # Canonical item: receipts cover EVERY variant line name, usage
+        # moves cover every material in the group.
+        names = it["variants"] or [it["name"]]
+        ph = ",".join("?" * len(names))
         receipts = con.execute(
             "SELECT pl.*, p.date AS pdate, p.status AS pstatus,"
             " s.name AS sname FROM purchase_lines pl"
             " JOIN purchases p ON p.id = pl.purchase_id"
             " JOIN suppliers s ON s.id = p.supplier_id"
-            " WHERE p.status='active' AND lower(TRIM(pl.name)) = ?"
+            f" WHERE p.status='active' AND TRIM(pl.name) IN ({ph})"
             " ORDER BY p.date DESC, p.id DESC, pl.sort, pl.id",
-            (it["key"],)).fetchall()
+            names).fetchall()
         moves = []
-        if it["material_id"]:
+        if it["material_ids"]:
+            ph2 = ",".join("?" * len(it["material_ids"]))
             moves = con.execute(
-                "SELECT * FROM stock_ledger WHERE material_id=?"
-                " AND type IN ('OUT','ADJUST')"
-                " ORDER BY date DESC, id DESC LIMIT 100",
-                (it["material_id"],)).fetchall()
+                "SELECT l.*, m.name AS mname FROM stock_ledger l"
+                " LEFT JOIN materials m ON m.id = l.material_id"
+                f" WHERE l.material_id IN ({ph2})"
+                " AND l.type IN ('OUT','ADJUST')"
+                " ORDER BY l.date DESC, l.id DESC LIMIT 100",
+                it["material_ids"]).fetchall()
     finally:
         con.close()
     return render_template("item_ledger.html", it=it, receipts=receipts,
@@ -1240,13 +1389,19 @@ def usage_add():
         qty = fnum(request.form.get("qty"))
         d = request.form.get("date") or today_iso()
         note = (request.form.get("notes") or "").strip()
+        it = None
         if item_name:
+            # v2.2: the picker lists canonical items (display labels);
+            # the OUT row posts against the group's primary material and
+            # counts against the COMBINED remaining of the whole group.
             it = purchased_item(item_name)
             if not it:
                 flash("Item nahi mila", "err")
                 return render_template("usage_form.html", mats=mats,
                                        today=today_iso())
-            mid = get_or_create_material(it["name"], it["unit"])
+            mid = it["material_id"] or get_or_create_material(
+                it["variants"][0] if it["variants"] else it["name"],
+                it["unit"])
         if not mid or qty <= 0:
             flash("Item aur qty zaroori hai", "err")
             return render_template("usage_form.html", mats=mats,
@@ -1269,8 +1424,15 @@ def usage_add():
             return render_template("usage_form.html", mats=mats,
                                    today=today_iso())
         audit(u["username"], "usage", "stock", mid, f"OUT {qty} bal={bal}")
-        flash(f"Save ho gaya: {m['name']} — {fmt_qty(qty)} {m['unit']} use."
-              f" Bacha: {fmt_qty(bal)}", "ok")
+        if it:
+            fresh = purchased_item(it["key"])
+            rem = fresh["rem_qty"] if it["unit"] == "pcs" \
+                else fresh["rem_kg"]
+            flash(f"Save ho gaya: {it['name']} — {fmt_qty(qty)}"
+                  f" {it['unit']} use. Bacha: {fmt_qty(rem)}", "ok")
+        else:
+            flash(f"Save ho gaya: {m['name']} — {fmt_qty(qty)}"
+                  f" {m['unit']} use. Bacha: {fmt_qty(bal)}", "ok")
         return redirect(url_for("stock"))
     return render_template("usage_form.html", mats=mats, today=today_iso())
 
@@ -1383,7 +1545,7 @@ def integrations():
 
 def _style_xlsx(ws, headers):
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    blue = PatternFill("solid", fgColor="1F4E79")
+    blue = PatternFill("solid", fgColor="047857")
     wf = Font(color="FFFFFF", bold=True, size=11)
     thin = Side(style="thin", color="B0B0B0")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -1429,8 +1591,10 @@ def export_xlsx(name):
                  "Previous Remaining (Rs)", "Current Bakaya (Rs)",
                  "Outstanding (Rs)", "Active"]
             ws.append(H)
+            bals = all_party_balances(
+                con, {r["id"]: (r["opening_balance"] or 0) for r in rows})
             for r in rows:
-                bal = party_balances(r["id"])
+                bal = bals[r["id"]]
                 ws.append([r["id"], r["name"], r["category"], r["phone"],
                            r["opening_balance"] or 0,
                            round(bal["prev_remaining"], 0),
@@ -1450,14 +1614,19 @@ def export_xlsx(name):
                  "Rate/Kg", "Amount (Rs)", "Cash Paid", "Cash Method",
                  "Bakaya (Rs)", "Status", "Note"]
             ws.append(H)
+            lines_map = _bulk_lines(con, [r["id"] for r in rows])
+            linked = _bulk_linked(
+                con, [r["id"] for r in rows if r["status"] == "active"])
             for r in rows:
-                lines = _lines_of(r["id"])
+                lines = lines_map.get(r["id"], [])
+                bakaya = ((r["amount"] or 0) - (r["cash_paid"] or 0)
+                          - linked.get(r["id"], 0)) \
+                    if r["status"] == "active" else 0
                 ws.append([r["id"], r["date"], r["sname"], r["mode"],
                            lines_summary(lines), r["total_kg"],
                            r["rate_per_kg"], r["amount"], r["cash_paid"],
                            r["cash_method_name"],
-                           round(purchase_bakaya(r["id"]), 0)
-                           if r["status"] == "active" else 0,
+                           round(bakaya, 0),
                            r["status"], r["notes"] or ""])
             return _finish_xlsx(ws, "purchases.xlsx", H)
         if name == "payments":
@@ -1540,7 +1709,7 @@ def export_party_ledger(sid):
                    r["bal"]])
     # style header row manually to keep the title rows clean
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    blue = PatternFill("solid", fgColor="1F4E79")
+    blue = PatternFill("solid", fgColor="047857")
     wf = Font(color="FFFFFF", bold=True, size=11)
     thin = Side(style="thin", color="B0B0B0")
     bd = Border(left=thin, right=thin, top=thin, bottom=thin)
