@@ -25,6 +25,20 @@
 {% endfor %}
 </table>
 </div>
+{% if splits %}
+<div class="card">
+<h3>✂️ Splits — is item se alag hua / is mein aaya</h3>
+<table>
+<tr><th>Date</th><th>Direction</th><th class="num">Qty / Kg</th><th>Note</th></tr>
+{% for s in splits %}
+<tr><td>{{ s.date }}</td>
+<td>{% if s.direction == 'out' %}Split → {{ s.other_name }}{% else %}Split ← {{ s.other_name }}{% endif %}</td>
+<td class="num">{% if s.kind == 'dhalai' %}Body: {{ s.body_qty|qty }} · Cup: {{ s.cup_qty|qty }} · {{ s.kg|qty }} kg{% elif s.kind == 'set' %}{{ s.qty|qty }} sets · {{ s.kg|qty }} kg{% elif s.kind == 'piece' %}{{ s.qty|qty }} pcs{% else %}{{ s.kg|qty }} kg{% endif %}</td>
+<td><small>{{ s.note }}</small></td></tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
 <div class="card">
 <h3>Usage / Adjustments</h3>
 <table>

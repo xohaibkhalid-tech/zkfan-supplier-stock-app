@@ -1,4 +1,10 @@
 {% extends "base.html" %}{% block t %}Stock{% endblock %}{% block body %}
+<style>
+  .itemdetail{margin-top:2px}
+  .itemdetail .dbody{display:none}
+  .itemdetail:has(.dchk:checked) .dbody{display:block}
+  .itemdetail .dchk{vertical-align:middle}
+</style>
 {% macro itemrow(x) %}
   <div class="itemrow">
     <div class="row">
@@ -11,6 +17,21 @@
     <div class="hint">Aaya: {% if x.in_qty %}{{ x.in_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.in_kg|qty }} kg{% endif %}
     · Use hua: {% if x.out_qty %}{{ x.out_qty|qty }} pcs{% endif %}{% if x.out_qty and x.out_kg %} · {% endif %}{% if x.out_kg %}{{ x.out_kg|qty }} kg{% endif %}{% if not x.out_qty and not x.out_kg %}—{% endif %}
     · <b>Bacha: {% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</b></div>
+    {% if x.detail %}
+    <div class="itemdetail">
+      <label class="hint"><input type="checkbox" class="dchk"> 📅 Date-wise detail — kab kitna aaya / use hua</label>
+      <div class="dbody">
+      <div class="hint"><b>Total aaya:</b> {% if x.in_qty %}{{ x.in_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.in_kg|qty }} kg{% endif %}</div>
+      {% for r in x.detail.receipts %}
+      <div class="hint">📥 {{ r.date }} · {{ r.party }} · {% if r.kind == 'dhalai' %}Body: {{ r.body_qty|qty }} · Cup: {{ r.cup_qty|qty }} · {{ r.kg|qty }} kg{% elif r.kind == 'set' %}{{ r.kg|qty }} kg ({{ r.body_qty|qty }} sets){% elif r.kind == 'piece' %}{{ r.qty|qty }} pcs{% else %}{{ r.kg|qty }} kg{% endif %}</div>
+      {% endfor %}
+      {% for mv in x.detail.usage %}
+      <div class="hint">📤 {{ mv.date }} · {% if mv.type == 'SPLIT' %}Split{% elif mv.type == 'OUT' %}Use{% else %}Adjust{% endif %} · {{ mv.qty|qty }} {{ x.unit }}{% if mv.notes %} · <small>{{ mv.notes }}</small>{% endif %}</div>
+      {% endfor %}
+      <div class="hint"><b>Bacha:</b> {% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 {% endmacro %}
 <div class="card">
@@ -26,9 +47,12 @@
   {% for p in g.pairs or [] %}
   <div class="pairblock">
     <div class="row"><div class="grow"><b>🏷️ {{ p.brand }}</b></div></div>
-    <div class="hint"><b>Sets tayyar: {{ p.sets|qty }} pcs</b>{% if p.extra_body %} · Extra body: {{ p.extra_body|qty }} pcs{% endif %}{% if p.extra_blade %} · Extra blade: {{ p.extra_blade|qty }} pcs{% endif %}</div>
+    {% if p.body %}<div class="hint"><b>Sets tayyar: {{ p.sets|qty }} pcs</b>{% if p.extra_body %} · Extra body: {{ p.extra_body|qty }} pcs{% endif %}{% if p.extra_blade %} · Extra blade: {{ p.extra_blade|qty }} pcs{% endif %}</div>
     {{ itemrow(p.body) }}
-    {{ itemrow(p.blade) }}
+    {{ itemrow(p.blade) }}{% endif %}
+    {% for e in p.extras or [] %}
+    {{ itemrow(e) }}
+    {% endfor %}
   </div>
   {% endfor %}
   {% for x in g.rows %}

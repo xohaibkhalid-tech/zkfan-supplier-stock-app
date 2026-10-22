@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v2.4-sets-a"
+VERSION = db.VERSION  # "v2.5-sections-a"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SUPPLIER_STOCK_SECRET", "dev-only-change-me")
@@ -1259,8 +1259,13 @@ def stock():
     # v2.4: SETS — body+blade cartons of a brand pair up into a brand
     # block (complete sets + extra) in Boxes & Packaging, and dhalai
     # models show their body/cup set counts.
+    # v2.5: items explicitly assigned to a brand SECTION render inside
+    # that brand's block (as extra lines, never counted in sets) and
+    # not again in their material group; every item carries a bulk
+    # date-wise detail (receipts + usage) for the expandable view.
     items = purchased_items()
     bc = db.dhalai_body_cup()
+    det = db.stock_details()
     for it in items:
         d = bc.get(it["key"])
         if d:
@@ -1270,19 +1275,43 @@ def stock():
                 "extra_body": max(0.0, d["body"] - d["cup"]),
                 "extra_cup": max(0.0, d["cup"] - d["body"]),
             }
+        it["detail"] = det.get(it["key"], {"receipts": [], "usage": []})
     groups = db.stock_groups(items)
     pairs, consumed = db.box_pairs(items)
-    if consumed:
+    # v2.5: section-assigned items join their brand block as extras.
+    pair_by_brand = {p["brand_key"]: p for p in pairs}
+    for p in pairs:
+        p["extras"] = []
+    hidden = set(consumed)
+    for it in items:
+        bk = it.get("section") or ""
+        if not bk or it["key"] in consumed:
+            continue
+        p = pair_by_brand.get(bk)
+        if p is None:
+            p = {"brand": db._brand_display(bk), "brand_key": bk,
+                 "body": None, "blade": None, "sets": 0,
+                 "extra_body": 0.0, "extra_blade": 0.0, "extras": []}
+            pairs.append(p)
+            pair_by_brand[bk] = p
+        p["extras"].append(it)
+        hidden.add(it["key"])
+    if hidden:
         kept = []
         for g in groups:
-            rows = [r for r in g["rows"] if r["key"] not in consumed]
+            rows = [r for r in g["rows"] if r["key"] not in hidden]
             if g["name"] == "Boxes & Packaging":
                 g["pairs"] = pairs
-                g["count"] = len(rows) + 2 * len(pairs)
-                g["rem_qty"] = sum(r["rem_qty"] for r in rows) + sum(
-                    p["body"]["rem_qty"] + p["blade"]["rem_qty"]
+                g["count"] = len(rows) + sum(
+                    (2 if p["body"] else 0) + len(p["extras"])
                     for p in pairs)
-                g["rem_kg"] = sum(r["rem_kg"] for r in rows)
+                g["rem_qty"] = sum(r["rem_qty"] for r in rows) + sum(
+                    (p["body"]["rem_qty"] if p["body"] else 0)
+                    + (p["blade"]["rem_qty"] if p["blade"] else 0)
+                    + sum(e["rem_qty"] for e in p["extras"])
+                    for p in pairs)
+                g["rem_kg"] = sum(r["rem_kg"] for r in rows) + sum(
+                    sum(e["rem_kg"] for e in p["extras"]) for p in pairs)
                 g["rows"] = rows
                 kept.append(g)
             elif rows:
@@ -1294,27 +1323,63 @@ def stock():
         if pairs and not any(g["name"] == "Boxes & Packaging"
                              for g in kept):
             kept.insert(0, {"name": "Boxes & Packaging", "rows": [],
-                            "pairs": pairs, "count": 2 * len(pairs),
+                            "pairs": pairs,
+                            "count": sum(
+                                (2 if p["body"] else 0) + len(p["extras"])
+                                for p in pairs),
                             "rem_qty": sum(
-                                p["body"]["rem_qty"]
-                                + p["blade"]["rem_qty"] for p in pairs),
-                            "rem_kg": 0.0})
+                                (p["body"]["rem_qty"] if p["body"] else 0)
+                                + (p["blade"]["rem_qty"] if p["blade"]
+                                   else 0)
+                                + sum(e["rem_qty"] for e in p["extras"])
+                                for p in pairs),
+                            "rem_kg": sum(
+                                sum(e["rem_kg"] for e in p["extras"])
+                                for p in pairs)})
         groups = kept
+    elif pairs:
+        # no pairs were consumed and nothing is section-assigned —
+        # cannot happen (pairs always consume their components), kept
+        # for safety so brand blocks never silently vanish.
+        for g in groups:
+            if g["name"] == "Boxes & Packaging":
+                g["pairs"] = pairs
     return render_template("stock.html", rows=items, groups=groups)
 
 
 @app.route("/stock/manage")
 @owner_required
 def stock_manage():
-    """Owner-only item administration: group move, rename, merge and
-    the merged-items (aliases) list. The POST endpoints are the same
-    ones the stock page used inline before v2.3."""
+    """Owner-only item administration: group/section move, rename,
+    merge, split and the merged-items (aliases) list. The POST
+    endpoints are the same ones the stock page used inline before
+    v2.3. v2.5: move destinations include brand sections, items can
+    be split into new items, and brand blocks are shown as
+    drag-and-drop targets."""
     items = purchased_items()
     groups = db.stock_groups(items)
     group_names = list(db.GROUP_ORDER) + sorted(
         {g["name"] for g in groups} - set(db.GROUP_ORDER))
+    pairs, consumed = db.box_pairs(items)
+    pair_by_brand = {p["brand_key"]: p for p in pairs}
+    for p in pairs:
+        p["members"] = [p["body"], p["blade"]]
+    for it in items:
+        bk = it.get("section") or ""
+        if bk and it["key"] not in consumed:
+            p = pair_by_brand.get(bk)
+            if p is None:
+                p = {"brand": db._brand_display(bk), "brand_key": bk,
+                     "body": None, "blade": None, "sets": 0,
+                     "extra_body": 0.0, "extra_blade": 0.0, "members": []}
+                pairs.append(p)
+                pair_by_brand[bk] = p
+            p["members"].append(it)
     return render_template("stock_manage.html", groups=groups,
                            all_items=items, group_names=group_names,
+                           pairs=pairs,
+                           brands=db.brand_sections(items),
+                           split_modes=db.split_modes(),
                            aliases=db.list_aliases(items=items))
 
 
@@ -1366,19 +1431,79 @@ def stock_alias_delete():
 
 
 @app.route("/stock/move-group", methods=["POST"])
+@app.route("/stock/move", methods=["POST"])
 @owner_required
 def stock_move_group():
+    """Move an item to a material group OR a brand section (v2.5).
+    Destination sources, in priority order: the free-text 'new_group'
+    box (an exact brand naam/section match becomes a section, anything
+    else a new/existing group), else the 'group_name'/'dest' select
+    ('section:<brand_key>' values assign a section; picking a group
+    clears any section). Drag-and-drop posts dest the same way."""
     u = current_user()
     ck = (request.form.get("canonical_key") or "").strip()
-    group = (request.form.get("new_group") or "").strip() \
-        or (request.form.get("group_name") or "").strip()
-    if not ck or not group or not purchased_item(ck):
+    it = purchased_item(ck) if ck else None
+    if not it:
+        flash("Item nahi mila", "err")
+        return redirect(url_for("stock_manage"))
+    items = purchased_items()
+    brands = db.brand_sections(items)
+    free = (request.form.get("new_group") or "").strip()
+    sel = (request.form.get("group_name") or "").strip() \
+        or (request.form.get("dest") or "").strip()
+    if free:
+        fk = db._norm_name(free)
+        hit = None
+        for bk, disp in brands.items():
+            if fk == bk or fk == db._norm_name(disp):
+                hit = bk
+                break
+        if hit:
+            db.move_item(ck, "section", hit)
+            audit(u["username"], "section", "stock_item", ck, hit)
+            flash(f"Item '{brands[hit]}' section mein chala gaya", "ok")
+        else:
+            db.move_item(ck, "group", free)
+            audit(u["username"], "group", "stock_item", ck, free)
+            flash(f"Item '{free}' group mein chala gaya", "ok")
+    elif sel.startswith("section:"):
+        bk = sel.split(":", 1)[1]
+        if bk not in brands:
+            flash("Section nahi mila", "err")
+            return redirect(url_for("stock_manage"))
+        db.move_item(ck, "section", bk)
+        audit(u["username"], "section", "stock_item", ck, bk)
+        flash(f"Item '{brands[bk]}' section mein chala gaya", "ok")
+    elif sel:
+        db.move_item(ck, "group", sel)
+        audit(u["username"], "group", "stock_item", ck, sel)
+        flash(f"Item '{sel}' group mein chala gaya", "ok")
+    else:
         flash("Item ya group nahi mila", "err")
-        return redirect(url_for("stock"))
-    db.set_item_group(ck, group)
-    audit(u["username"], "group", "stock_item", ck, group)
-    flash(f"Item '{group}' group mein chala gaya", "ok")
-    return redirect(url_for("stock"))
+    return redirect(url_for("stock_manage"))
+
+
+@app.route("/stock/split", methods=["POST"])
+@owner_required
+def stock_split():
+    """Split one stock item into a NEW item (owner tool, v2.5):
+    qty/kg/body/cup per the item's kind; the split is an auditable
+    movement pair — purchase history kabhi change nahi hoti."""
+    u = current_user()
+    ck = (request.form.get("canonical_key") or "").strip()
+    ok, res = db.split_item(
+        ck, request.form.get("dst_name"),
+        qty=fnum(request.form.get("qty")),
+        kg=fnum(request.form.get("kg")),
+        body_qty=fnum(request.form.get("body_qty")),
+        cup_qty=fnum(request.form.get("cup_qty")),
+        actor=u["username"])
+    if ok:
+        flash(f"Split ho gaya: naya item '{request.form.get('dst_name')}'"
+              " ban gaya", "ok")
+    else:
+        flash(res, "err")
+    return redirect(url_for("stock_manage"))
 
 
 @app.route("/stock/<path:item>")
@@ -1427,7 +1552,8 @@ def material_ledger(item):
     finally:
         con.close()
     return render_template("item_ledger.html", it=it, receipts=receipts,
-                           moves=moves)
+                           moves=moves,
+                           splits=db.splits_for(it["key"]))
 
 
 @app.route("/usage/add", methods=["GET", "POST"])

@@ -21,7 +21,7 @@ import sqlite3
 import threading
 from datetime import datetime, date
 
-VERSION = "v2.4-sets-a"
+VERSION = "v2.5-sections-a"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get(
@@ -186,6 +186,26 @@ CREATE TABLE IF NOT EXISTS item_labels (
 CREATE TABLE IF NOT EXISTS item_groups (
   canonical TEXT PRIMARY KEY,
   group_name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS item_sections (
+  canonical TEXT PRIMARY KEY,
+  brand_key TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS item_splits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  src_key TEXT NOT NULL,
+  src_name TEXT NOT NULL DEFAULT '',
+  dst_key TEXT NOT NULL,
+  dst_name TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'piece',
+  qty REAL DEFAULT 0,
+  kg REAL DEFAULT 0,
+  body_qty REAL DEFAULT 0,
+  cup_qty REAL DEFAULT 0,
+  actor TEXT DEFAULT '',
+  note TEXT DEFAULT '',
+  active INTEGER DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
@@ -948,6 +968,331 @@ def set_item_group(canonical_key, group_name):
         con.close()
 
 
+# ---------- sections: brand-block assignment (v2.5) ----------
+
+def _section_map(con):
+    try:
+        return {r["canonical"]: r["brand_key"] for r in con.execute(
+            "SELECT canonical, brand_key FROM item_sections").fetchall()}
+    except Exception:
+        return {}
+
+
+def set_item_section(canonical_key, brand_key):
+    """Assign a canonical item to a brand section (brand_key as produced
+    by _brand_key / box_pairs). Empty brand_key clears the assignment.
+    Display-only, like groups: purchase history is never touched."""
+    brand_key = (brand_key or "").strip()
+    con = _connect()
+    try:
+        if brand_key:
+            con.execute(
+                "INSERT INTO item_sections (canonical, brand_key)"
+                " VALUES (?,?) ON CONFLICT(canonical) DO UPDATE SET"
+                " brand_key=excluded.brand_key",
+                (canonical_key, brand_key))
+        else:
+            con.execute("DELETE FROM item_sections WHERE canonical=?",
+                        (canonical_key,))
+        con.commit()
+    finally:
+        con.close()
+
+
+def move_item(canonical_key, dest_type, dest_value):
+    """Unified item move (v2.5): dest_type 'section' assigns the item
+    to a brand section (its material group is kept but the section wins
+    on the Stock page); dest_type 'group' moves it to a material group
+    and CLEARS any section assignment."""
+    if dest_type == "section":
+        set_item_section(canonical_key, dest_value)
+    else:
+        set_item_group(canonical_key, dest_value)
+        set_item_section(canonical_key, "")
+    return True
+
+
+# ---------- splits: carve one item into a new item (v2.5) ----------
+
+def _split_rows(con):
+    try:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM item_splits WHERE active=1 ORDER BY id"
+        ).fetchall()]
+    except Exception:
+        return []
+
+
+def _line_stats(con):
+    """Raw purchase-line aggregates per canonical item, folded exactly
+    like purchased_items(): {canonical: {kind: {qty, weight_kg,
+    body_qty, cup_qty, body_total_kg, cup_total_kg}}}. RAW values —
+    splits are NOT applied here (split math needs the lot truth)."""
+    aliases = _alias_map(con)
+    rows = con.execute(
+        "SELECT TRIM(pl.name) AS name, pl.kind AS kind,"
+        " COALESCE(SUM(pl.qty),0) AS q,"
+        " COALESCE(SUM(pl.weight_kg),0) AS kg,"
+        " COALESCE(SUM(pl.body_qty),0) AS bq,"
+        " COALESCE(SUM(pl.cup_qty),0) AS cq,"
+        " COALESCE(SUM(pl.body_total_kg),0) AS bkg,"
+        " COALESCE(SUM(pl.cup_total_kg),0) AS ckg"
+        " FROM purchase_lines pl"
+        " JOIN purchases p ON p.id = pl.purchase_id"
+        " WHERE p.status='active' AND TRIM(pl.name) <> ''"
+        " GROUP BY TRIM(pl.name), pl.kind").fetchall()
+    out = {}
+    for r in rows:
+        ck = canonical_of(r["name"], aliases)
+        d = out.setdefault(ck, {}).setdefault(
+            r["kind"], {"qty": 0.0, "weight_kg": 0.0, "body_qty": 0.0,
+                        "cup_qty": 0.0, "body_total_kg": 0.0,
+                        "cup_total_kg": 0.0})
+        d["qty"] += r["q"] or 0
+        d["weight_kg"] += r["kg"] or 0
+        d["body_qty"] += r["bq"] or 0
+        d["cup_qty"] += r["cq"] or 0
+        d["body_total_kg"] += r["bkg"] or 0
+        d["cup_total_kg"] += r["ckg"] or 0
+    return out
+
+
+def split_mode_for(stats):
+    """Split mode of one item from its raw line stats: dhalai (body/cup
+    counts) > set (blade sets) > piece (pcs) > plain (seedha kg)."""
+    if not stats:
+        return "plain"
+    d = stats.get("dhalai")
+    if d and (d["body_qty"] or d["cup_qty"]):
+        return "dhalai"
+    if stats.get("set", {}).get("body_qty"):
+        return "set"
+    if stats.get("piece", {}).get("qty"):
+        return "piece"
+    return "plain"
+
+
+def split_modes(con=None):
+    """{canonical: split mode} for every purchased item (manage page)."""
+    own = con is None
+    con = con or _connect()
+    try:
+        stats = _line_stats(con)
+    finally:
+        if own:
+            con.close()
+    return {ck: split_mode_for(st) for ck, st in stats.items()}
+
+
+def split_item(src_key, dst_name, qty=0, kg=0, body_qty=0, cup_qty=0,
+               actor=""):
+    """Carve part of canonical item src_key's stock into a NEW item
+    named dst_name (owner Split tool, v2.5). Purchase lines and the
+    stock ledger are NEVER touched: the split is one auditable row in
+    item_splits (note 'Split -> <dst>' on the source, 'Split <- <src>'
+    on the target in every history view) and purchased_items() /
+    dhalai_body_cup() apply it as an in-transfer, so
+    source-remaining + target-remaining == source-remaining-before
+    (kg tolerance 0.01). Over-splits are refused.
+
+    Modes: dhalai — body_qty/cup_qty counts, kg moves proportionally at
+    the item's lot-derived per-unit weights; piece — qty (pcs);
+    set — qty = sets (body_qty), kg proportional at the per-set weight;
+    plain — kg directly.
+    Returns (True, dst_key) or (False, Roman-Urdu error message)."""
+    src = purchased_item(src_key)
+    if not src:
+        return False, "Item nahi mila"
+    dst_name = (dst_name or "").strip()
+    dst_key = _norm_name(dst_name)
+    if not dst_key:
+        return False, "Naye item ka naam likhein"
+    if dst_key == src["key"]:
+        return False, "Naya naam purane naam se alag rakhein"
+    con = _connect()
+    try:
+        aliases = _alias_map(con)
+        stats = _line_stats(con).get(src["key"], {})
+        splits = _split_rows(con)
+    finally:
+        con.close()
+    if canonical_of(dst_name, aliases) != dst_key \
+            or purchased_item(dst_key) is not None:
+        return False, ("Ye naam pehle se ek item hai — alag naam likhein"
+                       " ya Merge use karein")
+    mode = split_mode_for(stats)
+    qty = float(qty or 0)
+    kg = float(kg or 0)
+    body_qty = float(body_qty or 0)
+    cup_qty = float(cup_qty or 0)
+    move_qty = move_kg = 0.0
+    if mode == "dhalai":
+        if body_qty <= 0 and cup_qty <= 0:
+            return False, "Body ya cup — kam az kam ek qty likhein"
+        bc = dhalai_body_cup()
+        avail = bc.get(src["key"], {"body": 0.0, "cup": 0.0})
+        if body_qty > (avail["body"] or 0) + 0.001 \
+                or cup_qty > (avail["cup"] or 0) + 0.001:
+            return False, ("Itna stock nahi hai — body "
+                           f"{_fmt_n(avail['body'])} · cup "
+                           f"{_fmt_n(avail['cup'])} available hai")
+        d = stats.get("dhalai", {})
+        ubw = (d["body_total_kg"] / d["body_qty"]) if d.get("body_qty") \
+            else 0.0
+        ucw = (d["cup_total_kg"] / d["cup_qty"]) if d.get("cup_qty") \
+            else 0.0
+        move_kg = _r3(body_qty * ubw + cup_qty * ucw)
+        if move_kg > (src["rem_kg"] or 0) + 0.01:
+            return False, "Itna kg stock bacha hi nahi hai"
+    elif mode == "set":
+        if qty <= 0:
+            return False, "Kitne sets alag karne hain — qty likhein"
+        d = stats.get("set", {})
+        already = sum(s["qty"] for s in splits
+                      if s["src_key"] == src["key"] and s["kind"] == "set")
+        avail_sets = (d.get("body_qty") or 0) - already
+        if qty > avail_sets + 0.001:
+            return False, (f"Itne sets nahi hain — "
+                           f"{_fmt_n(avail_sets)} available hain")
+        uw = (d["weight_kg"] / d["body_qty"]) if d.get("body_qty") else 0.0
+        move_kg = _r3(qty * uw)
+        if move_kg > (src["rem_kg"] or 0) + 0.01:
+            return False, "Itna kg stock bacha hi nahi hai"
+        move_qty = qty
+    elif mode == "piece":
+        if qty <= 0:
+            return False, "Kitni qty alag karni hai — qty likhein"
+        if qty > (src["rem_qty"] or 0) + 0.001:
+            return False, (f"Itna stock bacha hi nahi hai — "
+                           f"{_fmt_n(src['rem_qty'])} pcs bache hain")
+        move_qty = qty
+    else:  # plain kg
+        if kg <= 0:
+            return False, "Kitna kg alag karna hai — kg likhein"
+        if kg > (src["rem_kg"] or 0) + 0.01:
+            return False, (f"Itna stock bacha hi nahi hai — "
+                           f"{_fmt_n(src['rem_kg'])} kg bacha hai")
+        move_kg = _r3(kg)
+    con = _connect()
+    try:
+        con.execute(
+            "INSERT INTO item_splits (date, src_key, src_name, dst_key,"
+            " dst_name, kind, qty, kg, body_qty, cup_qty, actor, note,"
+            " active) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)",
+            (today_iso(), src["key"], src["name"], dst_key, dst_name,
+             mode, move_qty, move_kg, body_qty if mode == "dhalai" else 0,
+             cup_qty if mode == "dhalai" else 0, actor or "",
+             f"Split -> {dst_name}"))
+        con.commit()
+    finally:
+        con.close()
+    # The new item inherits the source's group + section; a material
+    # row makes it usable for usage entries right away.
+    set_item_group(dst_key, src["group"])
+    if src.get("section"):
+        set_item_section(dst_key, src["section"])
+    get_or_create_material(dst_name, src["unit"])
+    audit(actor, "split", "stock_item", src["key"],
+          f"-> {dst_key} ({mode} qty={move_qty} kg={move_kg}"
+          f" body={body_qty} cup={cup_qty})")
+    return True, dst_key
+
+
+def _fmt_n(x):
+    v = float(x or 0)
+    return ("%.3f" % v).rstrip("0").rstrip(".") if v else "0"
+
+
+def splits_for(canonical, con=None):
+    """Split events involving one canonical item (History page):
+    [{date, direction ('out'|'in'), other_name, kind, qty, kg,
+    body_qty, cup_qty, note}] newest first."""
+    own = con is None
+    con = con or _connect()
+    try:
+        rows = _split_rows(con)
+        aliases = _alias_map(con)
+    finally:
+        if own:
+            con.close()
+    out = []
+    for s in rows:
+        sck = aliases.get(s["src_key"], s["src_key"])
+        dck = aliases.get(s["dst_key"], s["dst_key"])
+        if sck == canonical:
+            out.append({**s, "direction": "out",
+                        "other_name": s["dst_name"],
+                        "note": f"Split → {s['dst_name']}"})
+        elif dck == canonical:
+            out.append({**s, "direction": "in",
+                        "other_name": s["src_name"],
+                        "note": f"Split ← {s['src_name']}"})
+    out.sort(key=lambda r: (r["date"], r["id"]), reverse=True)
+    return out
+
+
+def stock_details(con=None):
+    """Date-wise detail for EVERY stock item in 3 bulk queries (v2.5 —
+    the Stock page's expandable per-item detail; NO per-item loops):
+    {canonical: {"receipts": [{date, party, kind, qty, kg, body_qty,
+    cup_qty}], "usage": [{date, type, qty, notes}]}}. Split events are
+    folded in: a 'Split -> X' usage line on the source, a
+    'Split <- src' receipt line on the target."""
+    own = con is None
+    con = con or _connect()
+    try:
+        aliases = _alias_map(con)
+        rec_rows = con.execute(
+            "SELECT TRIM(pl.name) AS name, pl.kind AS kind, pl.qty,"
+            " pl.weight_kg, pl.body_qty, pl.cup_qty, p.date AS pdate,"
+            " s.name AS sname FROM purchase_lines pl"
+            " JOIN purchases p ON p.id = pl.purchase_id"
+            " JOIN suppliers s ON s.id = p.supplier_id"
+            " WHERE p.status='active' AND TRIM(pl.name) <> ''"
+            " ORDER BY p.date, p.id, pl.sort, pl.id").fetchall()
+        move_rows = con.execute(
+            "SELECT l.date, l.type, l.qty, l.notes, m.name AS mname"
+            " FROM stock_ledger l"
+            " JOIN materials m ON m.id = l.material_id"
+            " WHERE l.type IN ('OUT','ADJUST')"
+            " ORDER BY l.date, l.id").fetchall()
+        splits = _split_rows(con)
+    finally:
+        if own:
+            con.close()
+    out = {}
+
+    def slot(ck):
+        return out.setdefault(ck, {"receipts": [], "usage": []})
+
+    for r in rec_rows:
+        ck = canonical_of(r["name"], aliases)
+        slot(ck)["receipts"].append({
+            "date": r["pdate"], "party": r["sname"], "kind": r["kind"],
+            "qty": r["qty"] or 0, "kg": r["weight_kg"] or 0,
+            "body_qty": r["body_qty"] or 0, "cup_qty": r["cup_qty"] or 0})
+    for r in move_rows:
+        ck = canonical_of(r["mname"], aliases)
+        slot(ck)["usage"].append({
+            "date": r["date"], "type": r["type"], "qty": r["qty"] or 0,
+            "notes": r["notes"] or ""})
+    for s in splits:
+        sck = aliases.get(s["src_key"], s["src_key"])
+        dck = aliases.get(s["dst_key"], s["dst_key"])
+        slot(sck)["usage"].append({
+            "date": s["date"], "type": "SPLIT",
+            "qty": s["qty"] or s["kg"] or 0,
+            "notes": f"Split → {s['dst_name']}"})
+        slot(dck)["receipts"].append({
+            "date": s["date"], "party": f"Split ← {s['src_name']}",
+            "kind": s["kind"], "qty": s["qty"] or 0, "kg": s["kg"] or 0,
+            "body_qty": s["body_qty"] or 0, "cup_qty": s["cup_qty"] or 0})
+    for d in out.values():
+        d["receipts"].sort(key=lambda r: (r["date"],), reverse=True)
+        d["usage"].sort(key=lambda r: (r["date"],), reverse=True)
+    return out
+
+
 def merge_items(src_key, dst_key):
     """Merge canonical item src into dst (stock display only — purchase
     lines are never touched): every variant name of src gets an alias to
@@ -1016,6 +1361,8 @@ def purchased_items(con=None):
         aliases = _alias_map(con)
         labels = _label_map(con)
         groups = _group_map(con)
+        sections = _section_map(con)
+        split_rows = _split_rows(con)
     finally:
         if own:
             con.close()
@@ -1053,6 +1400,30 @@ def purchased_items(con=None):
             it["_counts"][orig] = it["_counts"].get(orig, 0) + n
             it["_variants"].add(orig)
 
+    # v2.5 splits: carve-outs move IN stock from source to target at
+    # the canonical level (purchase lines never change). A split target
+    # with no purchase lines of its own becomes a real item here; its
+    # name joins the member names so a material created for it (usage
+    # entries) counts towards the target, not the source.
+    extra_members = {}
+    for s in split_rows:
+        sck = aliases.get(s["src_key"], s["src_key"])
+        dck = aliases.get(s["dst_key"], s["dst_key"])
+        if sck in items:
+            if s["kind"] == "piece":
+                items[sck]["in_qty"] -= s["qty"] or 0
+            items[sck]["in_kg"] -= s["kg"] or 0
+        ent = items.setdefault(dck, {"key": dck, "canonical": dck,
+                                     "in_qty": 0.0, "in_kg": 0.0,
+                                     "_counts": {}, "_variants": set()})
+        if s["kind"] == "piece":
+            ent["in_qty"] += s["qty"] or 0
+        ent["in_kg"] += s["kg"] or 0
+        ent["_counts"][s["dst_name"]] = \
+            ent["_counts"].get(s["dst_name"], 0) + 1
+        ent["_variants"].add(s["dst_name"])
+        extra_members.setdefault(dck, set()).add(s["dst_key"])
+
     out = []
     for ck, it in items.items():
         if it["in_qty"] <= 0 and it["in_kg"] <= 0:
@@ -1066,9 +1437,10 @@ def purchased_items(con=None):
         # materials of this group (by normalized material name)
         group_mats = []
         seen_mid = set()
-        for vn, v in variants.items():
-            if aliases.get(vn, vn) != ck:
-                continue
+        member_names = [vn for vn in variants
+                        if aliases.get(vn, vn) == ck]
+        member_names += sorted(extra_members.get(ck, ()))
+        for vn in member_names:
             m = mat_by_norm.get(vn)
             if m and m["id"] not in seen_mid:
                 group_mats.append(m)
@@ -1099,6 +1471,7 @@ def purchased_items(con=None):
         it["low"] = bool(primary and primary["min_level"]
                          and rem_primary < primary["min_level"])
         it["group"] = groups.get(ck) or default_group_for(ck)
+        it["section"] = sections.get(ck, "")
         del it["_counts"], it["_variants"]
         out.append(it)
     out.sort(key=lambda x: x["name"].lower())
@@ -1171,6 +1544,7 @@ def dhalai_body_cup(con=None):
             " AND TRIM(pl.name) <> ''"
             " GROUP BY TRIM(pl.name)").fetchall()
         aliases = _alias_map(con)
+        split_rows = _split_rows(con)
     finally:
         if own:
             con.close()
@@ -1180,6 +1554,20 @@ def dhalai_body_cup(con=None):
         d = out.setdefault(ck, {"body": 0.0, "cup": 0.0})
         d["body"] += r["b"] or 0
         d["cup"] += r["c"] or 0
+    # v2.5: splits move body/cup counts to the new item as well.
+    for s in split_rows:
+        if not (s["body_qty"] or s["cup_qty"]):
+            continue
+        sck = aliases.get(s["src_key"], s["src_key"])
+        dck = aliases.get(s["dst_key"], s["dst_key"])
+        if sck in out:
+            out[sck]["body"] = max(0.0, out[sck]["body"]
+                                   - (s["body_qty"] or 0))
+            out[sck]["cup"] = max(0.0, out[sck]["cup"]
+                                  - (s["cup_qty"] or 0))
+        d = out.setdefault(dck, {"body": 0.0, "cup": 0.0})
+        d["body"] += s["body_qty"] or 0
+        d["cup"] += s["cup_qty"] or 0
     return {k: v for k, v in out.items() if v["body"] or v["cup"]}
 
 
@@ -1242,3 +1630,16 @@ def box_pairs(items):
         consumed.add(b["key"])
         consumed.add(l["key"])
     return pairs, consumed
+
+
+def brand_sections(items):
+    """Every brand section that exists as a move destination (v2.5):
+    the brands detected by box_pairs() plus any brand_key an item is
+    explicitly assigned to. Returns {brand_key: display name}."""
+    pairs, _consumed = box_pairs(items)
+    out = {p["brand_key"]: p["brand"] for p in pairs}
+    for it in items:
+        bk = it.get("section") or ""
+        if bk and bk not in out:
+            out[bk] = _brand_display(bk)
+    return out

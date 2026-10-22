@@ -1,16 +1,35 @@
 {% extends "base.html" %}{% block t %}Manage Items{% endblock %}{% block body %}
+<style>
+  .itemrow[draggable="true"]{cursor:grab}
+  .dropzone{transition:outline-color .15s}
+  .dropzone.drag-over{outline:3px dashed #2e7d32;outline-offset:-3px}
+  .drag-hint{opacity:.55}
+</style>
 <div class="card">
 <div class="row"><h3 class="grow">⚙️ Manage Items</h3>
 <a class="btn small gray" href="{{ url_for('stock') }}">← Stock</a></div>
-<div class="hint">Har item ke liye: <b>Group</b> badlein (ya naya group likh kar banayein), <b>Rename</b> se display naam set karein, <b>Merge</b> se do naam ek item mein ginein. Ye sab sirf stock ki display par asar karta hai — purchase history hamesha mehfooz rehti hai.</div>
+<div class="hint">Har item ke liye: <b>Group / Section</b> badlein (dropdown se group ya brand section chunein, ya naya naam likh kar banayein — brand ka naam likhein to item us section mein chala jayega), <b>Rename</b> se display naam set karein, <b>Merge</b> se do naam ek item mein ginein, <b>Split</b> se ek item ka hissa naye item mein alag karein. Computer par item ko <span class="drag-hint">⠿</span> se pakad kar group/section card par drag bhi kar sakte hain. Ye sab sirf stock ki display par asar karta hai — purchase history hamesha mehfooz rehti hai.</div>
 </div>
-{% for g in groups %}
+{% if pairs %}
 <div class="card">
+<h3>🏷️ Brand Sections</h3>
+<div class="hint">Ye sections Stock page par brand blocks ki surat mein nazar aate hain. Item ko kisi section mein daalne ke liye uske Group dropdown se section chunein — ya item yahan drag kar dein.</div>
+{% for p in pairs %}
+<div class="itemrow dropzone" data-dest="section:{{ p.brand_key }}">
+  <b>🏷️ {{ p.brand }}</b>
+  <div class="hint">{% for m in p.members %}{{ m.name }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+{% for g in groups %}
+<div class="card dropzone" data-dest="group:{{ g.name }}">
 <h3>📁 {{ g.name }}</h3>
 {% for x in g.rows %}
-<div class="itemrow">
+<div class="itemrow" draggable="true" data-key="{{ x.key }}">
   <div class="row">
-    <div class="grow"><b>{{ x.name }}</b>
+    <div class="grow"><span class="drag-hint">⠿</span> <b>{{ x.name }}</b>
+    {% if x.section %}<span class="badge b-draft">🏷️ section mein hai</span>{% endif %}
     {% if x.variants|length > 1 %}<br><small class="hint">Shamil naam: {{ x.variants|join(', ') }}</small>{% endif %}
     </div>
   </div>
@@ -19,8 +38,17 @@
   <div class="itemctl">
     <form method="post" action="{{ url_for('stock_move_group') }}">
       <input type="hidden" name="canonical_key" value="{{ x.key }}">
-      <select name="group_name" title="Group">{% for gn in group_names %}<option value="{{ gn }}"{% if gn == x.group %} selected{% endif %}>{{ gn }}</option>{% endfor %}</select>
-      <input type="text" name="new_group" placeholder="Ya naya group…" size="12">
+      <select name="group_name" title="Group / Section">
+        <optgroup label="Groups">
+        {% for gn in group_names %}<option value="{{ gn }}"{% if gn == x.group and not x.section %} selected{% endif %}>{{ gn }}</option>{% endfor %}
+        </optgroup>
+        {% if brands %}
+        <optgroup label="Brand Sections">
+        {% for bk, disp in brands.items() %}<option value="section:{{ bk }}"{% if x.section == bk %} selected{% endif %}>🏷️ {{ disp }}</option>{% endfor %}
+        </optgroup>
+        {% endif %}
+      </select>
+      <input type="text" name="new_group" placeholder="Ya naya group / section…" size="12">
       <button class="btn small gray" type="submit">Group</button>
     </form>
     <form method="post" action="{{ url_for('stock_rename') }}">
@@ -35,6 +63,22 @@
       <button class="btn small gray" type="submit">Merge →</button>
     </form>
     {% endif %}
+    <form method="post" action="{{ url_for('stock_split') }}" onsubmit="return confirm('Is item ka hissa naye item mein alag ho jayega. Purchase history waisi hi rahegi.')">
+      <input type="hidden" name="canonical_key" value="{{ x.key }}">
+      <input type="text" name="dst_name" placeholder="Naye item ka naam" size="14" required>
+      {% set mode = split_modes.get(x.key, 'plain') %}
+      {% if mode == 'dhalai' %}
+      <input type="number" step="any" name="body_qty" placeholder="Body qty" size="7">
+      <input type="number" step="any" name="cup_qty" placeholder="Cup qty" size="7">
+      {% elif mode == 'set' %}
+      <input type="number" step="any" name="qty" placeholder="Sets" size="7">
+      {% elif mode == 'piece' %}
+      <input type="number" step="any" name="qty" placeholder="Qty (pcs)" size="7">
+      {% else %}
+      <input type="number" step="any" name="kg" placeholder="Kg" size="7">
+      {% endif %}
+      <button class="btn small gray" type="submit">✂️ Split</button>
+    </form>
   </div>
 </div>
 {% endfor %}
@@ -55,4 +99,41 @@
 </table>
 </div>
 {% endif %}
+<script>
+// Drag & drop (desktop): item card ko group/section card par drop
+// karein — wahi POST jo Group button karta hai. Mobile par select +
+// button hi reliable rasta hai.
+(function(){
+  var dragKey = null;
+  document.querySelectorAll('.itemrow[data-key]').forEach(function(el){
+    el.addEventListener('dragstart', function(e){
+      dragKey = el.getAttribute('data-key');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', dragKey); } catch(_){}
+    });
+    el.addEventListener('dragend', function(){ dragKey = null; });
+  });
+  document.querySelectorAll('.dropzone').forEach(function(z){
+    z.addEventListener('dragover', function(e){
+      if (!dragKey) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      z.classList.add('drag-over');
+    });
+    z.addEventListener('dragleave', function(){ z.classList.remove('drag-over'); });
+    z.addEventListener('drop', function(e){
+      e.preventDefault();
+      z.classList.remove('drag-over');
+      var key = dragKey || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+      if (!key) return;
+      var fd = new FormData();
+      fd.append('canonical_key', key);
+      fd.append('dest', z.getAttribute('data-dest'));
+      fetch('{{ url_for("stock_move_group") }}', {method: 'POST', body: fd})
+        .then(function(){ window.location.reload(); })
+        .catch(function(){ window.location.reload(); });
+    });
+  });
+})();
+</script>
 {% endblock %}
