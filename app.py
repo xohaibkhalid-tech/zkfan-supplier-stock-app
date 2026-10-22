@@ -34,7 +34,25 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v3.2-forms-a"
+VERSION = db.VERSION  # "v3.3-forms-a"
+
+# ---------- statement PDF (reportlab, OPTIONAL dependency) ----------
+# The app must boot and serve everything else even when reportlab is
+# not installed on the server: the ledger page then hides its PDF
+# button and the PDF route redirects with a friendly message.
+try:
+    from reportlab.lib import colors as rl_colors
+    from reportlab.lib.pagesizes import A4 as RL_A4
+    from reportlab.lib.styles import ParagraphStyle as RL_PStyle
+    from reportlab.lib.units import mm as RL_MM
+    from reportlab.platypus import (Paragraph as RL_Para,
+                                    SimpleDocTemplate as RL_Doc,
+                                    Spacer as RL_Spacer,
+                                    Table as RL_Table,
+                                    TableStyle as RL_TStyle)
+    HAVE_REPORTLAB = True
+except Exception:  # pragma: no cover - depends on server packages
+    HAVE_REPORTLAB = False
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SUPPLIER_STOCK_SECRET", "dev-only-change-me")
@@ -621,7 +639,7 @@ def supplier_ledger(sid):
         con.close()
     return render_template("party_ledger.html", s=s, rows=rows, balance=bal,
                            outstanding=split["total"],
-                           split=split)
+                           split=split, have_reportlab=HAVE_REPORTLAB)
 
 
 # ---------- bakaya drill-down (owner, v3.1) ----------
@@ -1947,6 +1965,71 @@ def _finish_xlsx(ws, filename, headers):
     return send_file(path, as_attachment=True, download_name=filename)
 
 
+def _finish_xlsx_pro(ws, filename, headers, title, context,
+                     money_cols=(), total_pred=None, total_last=False,
+                     widths=None, landscape=False, download_name=None):
+    """Professional statement finish (v3.3) for the party-ledger and
+    bakaya sheets. The sheet must arrive with the ORIGINAL header texts
+    in row 1 and the original data rows below; this inserts the title
+    block (row 1 merged title, row 2 context, row 3 blank) so the header
+    lands on row 4 and the data is unchanged below it. Amounts become
+    '#,##0' numbers, totals rows bold on a light green fill, panes
+    frozen under the header."""
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    ncol = len(headers)
+    ws.insert_rows(1, 3)
+    green_fill = PatternFill("solid", fgColor="2E7D32")
+    light_fill = PatternFill("solid", fgColor="E8F3E8")
+    thin = Side(style="thin", color="B0B0B0")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncol)
+    tcell = ws.cell(row=1, column=1, value=title)
+    tcell.font = Font(bold=True, size=14, color="2E7D32")
+    tcell.alignment = Alignment(vertical="center")
+    ws.row_dimensions[1].height = 24
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncol)
+    ccell = ws.cell(row=2, column=1, value=context)
+    ccell.font = Font(size=10, color="5B6B5B")
+    ccell.alignment = Alignment(vertical="center")
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(row=4, column=c)
+        cell.fill = green_fill
+        cell.font = Font(color="FFFFFF", bold=True, size=11)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+    ws.row_dimensions[4].height = 26
+    for r in range(5, ws.max_row + 1):
+        vals = tuple(ws.cell(row=r, column=c).value
+                     for c in range(1, ncol + 1))
+        is_total = bool((total_pred and total_pred(vals))
+                        or (total_last and r == ws.max_row))
+        for c in range(1, ncol + 1):
+            cell = ws.cell(row=r, column=c)
+            cell.border = border
+            cell.alignment = Alignment(
+                vertical="center",
+                horizontal="right" if c in money_cols else "left")
+            if c in money_cols and isinstance(cell.value, (int, float)):
+                cell.number_format = "#,##0"
+            if is_total:
+                cell.font = Font(bold=True)
+                cell.fill = light_fill
+    for i, h in enumerate(headers, 1):
+        letter = ws.cell(row=4, column=i).column_letter
+        w = (widths or {}).get(i) or max(14, min(36, len(str(h)) + 8))
+        ws.column_dimensions[letter].width = w
+    ws.freeze_panes = "A5"
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    if landscape:
+        ws.page_setup.orientation = "landscape"
+    path = f"/tmp/{filename}"
+    ws.parent.save(path)
+    return send_file(path, as_attachment=True,
+                     download_name=download_name or filename)
+
+
 @app.route("/export/<name>.xlsx")
 @owner_required
 def export_xlsx(name):
@@ -2037,14 +2120,24 @@ def export_xlsx(name):
             ws.append(H)
             bals = all_party_balances(
                 con, {r["id"]: (r["opening_balance"] or 0) for r in rows})
+            t_open = t_paid = t_rem = 0.0
             for r in rows:
                 if (r["opening_balance"] or 0) <= 0:
                     continue
                 bal = bals[r["id"]]
+                t_open += round(bal["opening"], 0)
+                t_paid += round(bal["prev_paid"], 0)
+                t_rem += round(bal["prev_remaining"], 0)
                 ws.append([r["name"], round(bal["opening"], 0),
                            round(bal["prev_paid"], 0),
                            round(bal["prev_remaining"], 0)])
-            return _finish_xlsx(ws, "previous-bakaya.xlsx", H)
+            ws.append(["Total", t_open, t_paid, t_rem])
+            return _finish_xlsx_pro(
+                ws, "previous-bakaya.xlsx", H,
+                "ZK FAN — Previous Bakaya",
+                f"Saari parties · Generated: {date.today().isoformat()}",
+                money_cols=(2, 3, 4),
+                total_pred=lambda vals: vals[0] == "Total")
         if name == "current-bakaya":
             # v3.2: every bakaya-carrying purchase, grouped by party
             # with a subtotal row under each party.
@@ -2070,7 +2163,13 @@ def export_xlsx(name):
                                round(x["bakaya"], 0)])
                 ws.append(["", sname, "Subtotal", "", "",
                            round(sum(x["bakaya"] for x in xs), 0)])
-            return _finish_xlsx(ws, "current-bakaya.xlsx", H)
+            return _finish_xlsx_pro(
+                ws, "current-bakaya.xlsx", H,
+                "ZK FAN — Current Bakaya",
+                f"Saari parties · Generated: {date.today().isoformat()}",
+                money_cols=(4, 5, 6),
+                total_pred=lambda vals: len(vals) > 2
+                and vals[2] == "Subtotal")
         if name == "stock":
             # v2.1: purchased items only — same source as the Stock page.
             wb = openpyxl.Workbook()
@@ -2109,46 +2208,155 @@ def export_party_ledger(sid):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Ledger"
-    ws.append([f"ZK FAN — Party Ledger: {s['name']}"])
-    ws.append([f"Outstanding: Rs {bal:,.0f}"])
-    ws.append([f"Previous remaining: Rs {split['prev_remaining']:,.0f}"
-               f"  (opening Rs {split['opening']:,.0f}"
-               f" − paid Rs {split['prev_paid']:,.0f})"])
-    ws.append([f"Current remaining: Rs {split['current_bakaya']:,.0f}"
-               f"  (purchases bakaya Rs"
-               f" {split['purchase_bakaya_gross']:,.0f}"
-               f" − paid Rs {split['current_paid']:,.0f})"])
-    ws.append([])
     H = ["Date", "Type", "Previous/Current", "Ref", "Detail",
          "Plus (Rs)", "Minus (Rs)", "Balance (Rs)"]
     ws.append(H)
-    hdr_row = ws.max_row
     for r in rows:
         ws.append([r["date"], r["type"], r.get("tag", ""), r["ref"],
                    r["detail"], r["plus"] or "", r["minus"] or "",
                    r["bal"]])
-    # style header row manually to keep the title rows clean
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    blue = PatternFill("solid", fgColor="047857")
-    wf = Font(color="FFFFFF", bold=True, size=11)
-    thin = Side(style="thin", color="B0B0B0")
-    bd = Border(left=thin, right=thin, top=thin, bottom=thin)
-    for c in range(1, len(H) + 1):
-        cell = ws.cell(row=hdr_row, column=c)
-        cell.fill = blue
-        cell.font = wf
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = bd
-        letter = cell.column_letter
-        ws.column_dimensions[letter].width = 18 if c != 5 else 52
-    for row in ws.iter_rows(min_row=hdr_row + 1, max_row=ws.max_row,
-                            max_col=len(H)):
-        for cell in row:
-            cell.border = bd
-    path = f"/tmp/ledger_{sid}.xlsx"
-    wb.save(path)
-    return send_file(path, as_attachment=True,
-                     download_name=f"ledger_{s['name']}.xlsx")
+    context = (f"{s['name']} · {s['id']} · Previous remaining: "
+               f"Rs {split['prev_remaining']:,.0f} · Current remaining: "
+               f"Rs {split['current_bakaya']:,.0f} · Total outstanding: "
+               f"Rs {bal:,.0f} · Generated: {date.today().isoformat()}")
+    return _finish_xlsx_pro(
+        ws, f"ledger_{sid}.xlsx", H,
+        "ZK FAN — Supplier Statement", context,
+        money_cols=(6, 7, 8), total_last=True, widths={5: 52},
+        landscape=True, download_name=f"ledger_{s['name']}.xlsx")
+
+
+def _statement_pdf_bytes(s, rows, bal, split):
+    """Professional A4 statement PDF for one party (reportlab Platypus,
+    v3.3). Rows/order come straight from _ledger_rows — the same data
+    as the on-screen ledger and the statement xlsx; no parallel math.
+    Only called when HAVE_REPORTLAB is true."""
+    import io
+    from xml.sax.saxutils import escape
+    buf = io.BytesIO()
+    green = rl_colors.HexColor("#2e7d32")
+    light = rl_colors.HexColor("#e8f3e8")
+    grey = rl_colors.HexColor("#5b6b5b")
+    grid = rl_colors.HexColor("#c9d4c9")
+    void_grey = rl_colors.HexColor("#9a9a9a")
+
+    def footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(grey)
+        canvas.drawString(15 * RL_MM, 10 * RL_MM,
+                          "ZK FAN — Supplier & Stock System se tayyar")
+        canvas.drawRightString(
+            RL_A4[0] - 15 * RL_MM, 10 * RL_MM, f"Page {doc.page}")
+        canvas.restoreState()
+
+    doc = RL_Doc(buf, pagesize=RL_A4,
+                 leftMargin=15 * RL_MM, rightMargin=15 * RL_MM,
+                 topMargin=14 * RL_MM, bottomMargin=16 * RL_MM,
+                 title=f"ZK FAN Statement — {s['name']}", author="ZK FAN")
+    el = [RL_Para("ZK FAN", RL_PStyle(
+              "mh", fontName="Helvetica-Bold", fontSize=20, leading=24,
+              textColor=green)),
+          RL_Para("Supplier Statement", RL_PStyle(
+              "msub", fontName="Helvetica", fontSize=12, leading=15,
+              textColor=grey)),
+          RL_Para(f"Generated: {date.today().isoformat()}", RL_PStyle(
+              "mgen", fontName="Helvetica", fontSize=9, leading=12,
+              textColor=grey)),
+          RL_Spacer(1, 4 * RL_MM),
+          RL_Para(f"<b>{escape(str(s['name']))}</b> · "
+                  f"{escape(str(s['id']))}", RL_PStyle(
+                      "party", fontName="Helvetica", fontSize=11,
+                      leading=14)),
+          RL_Spacer(1, 3 * RL_MM)]
+    band = RL_Table(
+        [["Previous balance bacha", "Current bakaya", "Total outstanding"],
+         [fmt_rs(split["prev_remaining"]), fmt_rs(split["current_bakaya"]),
+          fmt_rs(bal)]],
+        colWidths=[60 * RL_MM, 60 * RL_MM, 60 * RL_MM])
+    band.setStyle(RL_TStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), light),
+        ("TEXTCOLOR", (0, 0), (-1, 0), grey),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8.5),
+        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 1), (-1, 1), 13),
+        ("BOX", (0, 0), (-1, -1), 0.7, grid),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, grid),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8)]))
+    el.append(band)
+    el.append(RL_Spacer(1, 4 * RL_MM))
+    det = RL_PStyle("det", fontName="Helvetica", fontSize=8.5, leading=11)
+    det_void = RL_PStyle("detv", parent=det, textColor=void_grey)
+    data = [["Date", "Type", "Detail", "Plus (Rs)", "Minus (Rs)",
+             "Balance (Rs)"]]
+    void_rows = []
+    for r in rows:
+        typ = r["type"] + (f" ({r['tag']})" if r.get("tag") else "")
+        if r["void"]:
+            typ += " (void)"
+            void_rows.append(len(data))
+        data.append([
+            str(r["date"]), typ,
+            RL_Para(escape(str(r["detail"] or "")),
+                    det_void if r["void"] else det),
+            f"{r['plus']:,.0f}" if r["plus"] else "—",
+            f"{r['minus']:,.0f}" if r["minus"] else "—",
+            f"{r['bal']:,.0f}"])
+    data.append(["Final outstanding", "", "", "", "", f"{bal:,.0f}"])
+    tbl = RL_Table(data, repeatRows=1,
+                   colWidths=[22 * RL_MM, 30 * RL_MM, 52 * RL_MM,
+                              24 * RL_MM, 24 * RL_MM, 28 * RL_MM])
+    style = [("BACKGROUND", (0, 0), (-1, 0), green),
+             ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+             ("FONTSIZE", (0, 0), (-1, 0), 9.5),
+             ("FONTNAME", (0, 1), (-1, -2), "Helvetica"),
+             ("FONTSIZE", (0, 1), (-1, -2), 9),
+             ("ALIGN", (3, 0), (-1, -1), "RIGHT"),
+             ("GRID", (0, 0), (-1, -1), 0.4, grid),
+             ("VALIGN", (0, 0), (-1, -1), "TOP"),
+             ("TOPPADDING", (0, 0), (-1, -1), 4),
+             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+             ("SPAN", (0, -1), (4, -1)),
+             ("ALIGN", (0, -1), (0, -1), "RIGHT"),
+             ("BACKGROUND", (0, -1), (-1, -1), light),
+             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+             ("FONTSIZE", (0, -1), (-1, -1), 9.5)]
+    for i in void_rows:
+        style.append(("TEXTCOLOR", (0, i), (-1, i), void_grey))
+    tbl.setStyle(RL_TStyle(style))
+    el.append(tbl)
+    doc.build(el, onFirstPage=footer, onLaterPages=footer)
+    buf.seek(0)
+    return buf
+
+
+@app.route("/export/party-ledger/<sid>.pdf")
+@owner_required
+def export_party_ledger_pdf(sid):
+    """Server-side statement PDF (v3.3). Degrades gracefully when the
+    server has no reportlab: friendly flash + back to the ledger (the
+    page also hides its PDF button in that case)."""
+    con = _connect()
+    try:
+        s = con.execute("SELECT * FROM suppliers WHERE id=?",
+                        (sid,)).fetchone()
+        if not s:
+            abort(404)
+        if not HAVE_REPORTLAB:
+            flash("PDF export is machine par available nahi — Excel"
+                  " wala button use karein", "err")
+            return redirect(url_for("supplier_ledger", sid=sid))
+        rows, bal = _ledger_rows(s, con)
+        split = party_balances(sid, con)
+    finally:
+        con.close()
+    buf = _statement_pdf_bytes(s, rows, bal, split)
+    return send_file(buf, mimetype="application/pdf", as_attachment=True,
+                     download_name=f"statement_{s['name']}.pdf")
 
 
 # ---------- users & backup (owner) ----------

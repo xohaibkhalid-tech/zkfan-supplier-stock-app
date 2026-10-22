@@ -158,10 +158,10 @@ function recalc(){
   document.getElementById('tot-bakaya').textContent = fmt(totAmt - cash);
 }
 {% for ln in lines %}
-addLine({kind: {{ ln.kind|tojson }}, name: {{ ln.name|tojson }}, qty: {{ ln.qty or '' }}, rate: {{ ln.rate or '' }},
-  body_qty: {{ ln.body_qty or '' }}, body_wt: {{ ln.body_wt or '' }}, cup_qty: {{ ln.cup_qty or '' }}, cup_wt: {{ ln.cup_wt or '' }},
-  sets: {{ ln.body_qty if ln.kind == 'set' else '' }}, set_wt: {{ ln.body_wt if ln.kind == 'set' else '' }},
-  weight_kg: {{ ln.weight_kg or '' }}, oamount: {{ ln.amount if ln.kind == 'other' else '' }}});
+addLine({kind: {{ ln.kind|tojson }}, name: {{ ln.name|tojson }}, qty: {{ (ln.qty or '')|tojson }}, rate: {{ (ln.rate or '')|tojson }},
+  body_qty: {{ (ln.body_qty or '')|tojson }}, body_wt: {{ (ln.body_wt or '')|tojson }}, cup_qty: {{ (ln.cup_qty or '')|tojson }}, cup_wt: {{ (ln.cup_wt or '')|tojson }},
+  sets: {{ (ln.body_qty if ln.kind == 'set' else '')|tojson }}, set_wt: {{ (ln.body_wt if ln.kind == 'set' else '')|tojson }},
+  weight_kg: {{ (ln.weight_kg or '')|tojson }}, oamount: {{ (ln.amount if ln.kind == 'other' else '')|tojson }}});
 {% endfor %}
 if (!document.querySelectorAll('#lines .line-row').length) addLine();
 modeChange();

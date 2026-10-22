@@ -18,6 +18,7 @@
   <div class="no-print mt">
     <button class="btn small" onclick="window.print()">🖨 Print / PDF</button>
     <a class="btn small gray" href="{{ url_for('export_party_ledger', sid=s.id) }}">📥 Excel</a>
+    {% if have_reportlab %}<a class="btn small gray" href="{{ url_for('export_party_ledger_pdf', sid=s.id) }}">📄 PDF</a>{% endif %}
     <a class="btn small green" href="{{ url_for('payment_add', supplier_id=s.id) }}">💸 Payment do</a>
     <a class="btn small gray" href="{{ url_for('supplier_edit', sid=s.id) }}">✏️ Edit party</a>
     <a class="btn small gray" data-cancel href="{{ url_for('suppliers') }}">← Parties</a>
@@ -41,7 +42,7 @@
 
 <div class="card">
 <table>
-<tr><th>Date</th><th>Type</th><th>Detail</th><th class="num">Plus</th><th class="num">Minus</th><th class="num">Balance</th><th></th></tr>
+<tr><th>Date</th><th>Type</th><th>Detail</th><th class="num">Plus</th><th class="num">Minus</th><th class="num">Balance</th><th class="no-print"></th></tr>
 {% for r in rows %}
 <tr class="{{ 'struck' if r.void }}">
   <td>{{ r.date }}</td>
@@ -50,7 +51,7 @@
   <td class="num">{{ r.plus|rs if r.plus else '—' }}</td>
   <td class="num">{{ r.minus|rs if r.minus else '—' }}</td>
   <td class="num"><b>{{ r.bal|rs }}</b></td>
-  <td style="white-space:nowrap">{% if not r.void %}
+  <td class="no-print" style="white-space:nowrap">{% if not r.void %}
     {% if r.ekind == 'opening' %}<a class="btn small gray" href="{{ url_for('previous_bakaya_edit', sid=r.eid) }}">✏️ Edit</a>
     <form method="post" action="{{ url_for('previous_bakaya_delete', sid=r.eid) }}" style="display:inline" onsubmit="return confirm('Is party ka previous balance delete kar dein?')"><button class="btn small red" type="submit">🗑</button></form>
     {% elif r.ekind == 'purchase' %}<a class="btn small gray" href="{{ url_for('purchase_edit', pid=r.eid) }}">✏️ Edit</a>
