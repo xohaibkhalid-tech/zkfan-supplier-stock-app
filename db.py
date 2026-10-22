@@ -16,11 +16,12 @@ v2 changes (forms-based model):
   path posts to CashBook. cashbook_sync stays as a dormant log table.
 """
 import os
+import re
 import sqlite3
 import threading
 from datetime import datetime, date
 
-VERSION = "v2.3-simplicity-a"
+VERSION = "v2.4-sets-a"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get(
@@ -186,6 +187,10 @@ CREATE TABLE IF NOT EXISTS item_groups (
   canonical TEXT PRIMARY KEY,
   group_name TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT DEFAULT ''
+);
 """
 
 _INDEXES = [
@@ -258,26 +263,46 @@ def _migrate(con):
                 " OR (purchase_id IS NOT NULL AND purchase_id <> '')")
     except Exception:
         pass
-
-
-def init_db():
-    con = _connect()
+    # v2.4 marker-guarded one-time seeds/fixes. Each runs ONLY while its
+    # settings flag is absent, then sets the flag — an owner's later
+    # deliberate change (Unmerge, group move) is never undone by a
+    # reboot. (The v2.2 copper seed was guarded on table creation and
+    # misfired on the live DB, whose item_aliases table existed but was
+    # empty; the settings flag is the reliable marker.)
     try:
-        existed = {r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'")}
-        con.executescript(SCHEMA)
-        _migrate(con)
-        if "item_aliases" not in existed:
-            # One-time seed (v2.2, the user's own words): the copper wire
-            # bought as 'hi star 21 number' IS '21 number' — one material,
-            # display label '21 Number Copper Wire'. Seeded only when the
-            # table is first created, so an owner's later Unmerge sticks.
+        flags = {r[0] for r in con.execute("SELECT key FROM settings")}
+        if "seed_copper_merge" not in flags:
+            # The copper wire bought as 'hi star 21 number' IS
+            # '21 number' — one material (the user's own words, v2.2).
             con.execute(
                 "INSERT OR IGNORE INTO item_aliases (variant, canonical)"
                 " VALUES ('hi star 21 number', '21 number')")
             con.execute(
                 "INSERT OR IGNORE INTO item_labels (canonical, label)"
                 " VALUES ('21 number', '21 Number Copper Wire')")
+            con.execute(
+                "INSERT OR IGNORE INTO settings (key, value)"
+                " VALUES ('seed_copper_merge', '1')")
+        if "fix_dabbi_group_v24" not in flags:
+            # 'dabbi' is NOT packaging (user, v2.4): if an older keyword
+            # rule pinned it to Boxes & Packaging, move it to its own
+            # 'Dabbi' group — once only.
+            con.execute(
+                "UPDATE item_groups SET group_name='Dabbi'"
+                " WHERE canonical='dabbi'"
+                " AND group_name='Boxes & Packaging'")
+            con.execute(
+                "INSERT OR IGNORE INTO settings (key, value)"
+                " VALUES ('fix_dabbi_group_v24', '1')")
+    except Exception:
+        pass
+
+
+def init_db():
+    con = _connect()
+    try:
+        con.executescript(SCHEMA)
+        _migrate(con)
         _seed_item_groups(con)
         con.commit()
     finally:
@@ -793,7 +818,7 @@ GROUP_ORDER = ["Boxes & Packaging", "Copper Wire", "Dhalai (Models)",
                "Electric Sheet & Parts", "Hardware", "Other"]
 
 _GROUP_RULES = [
-    (("dabb", "box", "carton"), "Boxes & Packaging"),
+    (("dabba", "box", "carton"), "Boxes & Packaging"),
     (("number", "wire", "copper"), "Copper Wire"),
     (("bearing",), "Bearings"),
     (("kit", "acdc"), "Kits"),
@@ -810,6 +835,10 @@ def default_group_for(canonical_key):
     """Keyword default group for a canonical item name (priority order
     as listed in _GROUP_RULES); unmatched items land in 'Other'."""
     k = canonical_key or ""
+    if k == "dabbi":
+        # 'dabbi' is NOT packaging (user, v2.4) — it gets its own group
+        # and must never fall into Boxes through the 'dabba' keyword.
+        return "Dabbi"
     for words, group in _GROUP_RULES:
         if any(w in k for w in words):
             return group
@@ -1118,3 +1147,98 @@ def stock_groups(items=None, con=None):
     return [{"name": n, "rows": by[n], "count": len(by[n]),
              "rem_qty": sum(i["rem_qty"] for i in by[n]),
              "rem_kg": sum(i["rem_kg"] for i in by[n])} for n in names]
+
+
+# ---------- sets: component pairs that make one set (v2.4) ----------
+
+def dhalai_body_cup(con=None):
+    """Per canonical dhalai item: total bodies and cups BOUGHT, summed
+    over the purchase_lines (kind='dhalai') of ACTIVE purchases across
+    every variant name in the canonical group. One dhalai set = one body
+    + one cup, so sets = min(body, cup) and the rest is extra. Returns
+    {canonical: {"body": float, "cup": float}}; items whose lines carry
+    no body/cup counts at all are omitted."""
+    own = con is None
+    con = con or _connect()
+    try:
+        rows = con.execute(
+            "SELECT TRIM(pl.name) AS name,"
+            " COALESCE(SUM(pl.body_qty),0) AS b,"
+            " COALESCE(SUM(pl.cup_qty),0) AS c"
+            " FROM purchase_lines pl"
+            " JOIN purchases p ON p.id = pl.purchase_id"
+            " WHERE p.status='active' AND pl.kind='dhalai'"
+            " AND TRIM(pl.name) <> ''"
+            " GROUP BY TRIM(pl.name)").fetchall()
+        aliases = _alias_map(con)
+    finally:
+        if own:
+            con.close()
+    out = {}
+    for r in rows:
+        ck = canonical_of(r["name"], aliases)
+        d = out.setdefault(ck, {"body": 0.0, "cup": 0.0})
+        d["body"] += r["b"] or 0
+        d["cup"] += r["c"] or 0
+    return {k: v for k, v in out.items() if v["body"] or v["cup"]}
+
+
+_BOX_WORDS_RE = re.compile(r"\b(?:body|blade|carton|box|dabba|dabbi|set)\b")
+
+
+def _brand_key(norm_name, component):
+    """Brand key of a carton item: the normalized name minus the
+    component word ('body'/'blade') and the container words — the part
+    that names the fan brand ('zk body dabba' -> 'zk',
+    'mujahid fan blade box' -> 'mujahid fan')."""
+    s = _BOX_WORDS_RE.sub(" ", norm_name or "")
+    return " ".join(s.split())
+
+
+def _brand_display(brand_key):
+    """Heading text for a brand block: short all-letter keys read as
+    initials ('zk' -> 'ZK'), longer keys title-cased ('mujahid fan' ->
+    'Mujahid Fan')."""
+    if len(brand_key) <= 3 and brand_key.isalpha():
+        return brand_key.upper()
+    return brand_key.title()
+
+
+def box_pairs(items):
+    """Detect body/blade CARTON pairs among purchased_items() (the
+    user's set concept, v2.4): a body carton + a blade carton of the
+    same brand make complete fan-box sets — sets = min(remaining of
+    the two), the rest of the bigger side is extra. Detection is purely
+    name-based on the canonical key (contains 'body' / 'blade', never
+    'master' — master cartons are standalone), so future purchases pair
+    automatically. Returns (pairs, consumed_keys): each pair is
+    {brand, brand_key, body, blade, sets, extra_body, extra_cup} with
+    body/blade being the item dicts; consumed_keys are the canonical
+    keys the caller must not render again in their own groups."""
+    bodies, blades = {}, {}
+    for it in items:
+        n = it["key"] or ""
+        # 'master' as a whole word only — a master carton is standalone,
+        # but the brand 'airmaster' merely CONTAINS the substring and
+        # its body/blade cartons pair like any other brand.
+        if re.search(r"\bmaster\b", n) or (it["in_qty"] or 0) <= 0:
+            continue
+        if "body" in n:
+            bodies.setdefault(_brand_key(n, "body"), it)
+        elif "blade" in n:
+            blades.setdefault(_brand_key(n, "blade"), it)
+    pairs, consumed = [], set()
+    for brand in sorted(set(bodies) & set(blades)):
+        if not brand:
+            continue
+        b, l = bodies[brand], blades[brand]
+        sets = min(b["rem_qty"], l["rem_qty"])
+        pairs.append({
+            "brand": _brand_display(brand), "brand_key": brand,
+            "body": b, "blade": l, "sets": sets,
+            "extra_body": max(0.0, b["rem_qty"] - l["rem_qty"]),
+            "extra_blade": max(0.0, l["rem_qty"] - b["rem_qty"]),
+        })
+        consumed.add(b["key"])
+        consumed.add(l["key"])
+    return pairs, consumed

@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v2.3-simplicity-a"
+VERSION = db.VERSION  # "v2.4-sets-a"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SUPPLIER_STOCK_SECRET", "dev-only-change-me")
@@ -1256,8 +1256,50 @@ def stock():
     # v2.2: canonical items (aliases merged), organised into groups.
     # v2.3: VIEW-ONLY page — all item-admin tools (group / rename /
     # merge) moved to /stock/manage so this page stays clean.
+    # v2.4: SETS — body+blade cartons of a brand pair up into a brand
+    # block (complete sets + extra) in Boxes & Packaging, and dhalai
+    # models show their body/cup set counts.
     items = purchased_items()
+    bc = db.dhalai_body_cup()
+    for it in items:
+        d = bc.get(it["key"])
+        if d:
+            sets = min(d["body"], d["cup"])
+            it["dhalai"] = {
+                "body": d["body"], "cup": d["cup"], "sets": sets,
+                "extra_body": max(0.0, d["body"] - d["cup"]),
+                "extra_cup": max(0.0, d["cup"] - d["body"]),
+            }
     groups = db.stock_groups(items)
+    pairs, consumed = db.box_pairs(items)
+    if consumed:
+        kept = []
+        for g in groups:
+            rows = [r for r in g["rows"] if r["key"] not in consumed]
+            if g["name"] == "Boxes & Packaging":
+                g["pairs"] = pairs
+                g["count"] = len(rows) + 2 * len(pairs)
+                g["rem_qty"] = sum(r["rem_qty"] for r in rows) + sum(
+                    p["body"]["rem_qty"] + p["blade"]["rem_qty"]
+                    for p in pairs)
+                g["rem_kg"] = sum(r["rem_kg"] for r in rows)
+                g["rows"] = rows
+                kept.append(g)
+            elif rows:
+                g["rows"] = rows
+                g["count"] = len(rows)
+                g["rem_qty"] = sum(r["rem_qty"] for r in rows)
+                g["rem_kg"] = sum(r["rem_kg"] for r in rows)
+                kept.append(g)
+        if pairs and not any(g["name"] == "Boxes & Packaging"
+                             for g in kept):
+            kept.insert(0, {"name": "Boxes & Packaging", "rows": [],
+                            "pairs": pairs, "count": 2 * len(pairs),
+                            "rem_qty": sum(
+                                p["body"]["rem_qty"]
+                                + p["blade"]["rem_qty"] for p in pairs),
+                            "rem_kg": 0.0})
+        groups = kept
     return render_template("stock.html", rows=items, groups=groups)
 
 
