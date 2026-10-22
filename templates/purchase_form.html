@@ -26,7 +26,7 @@
 <div id="lines"></div>
 <button type="button" class="btn small green" onclick="addLine()">➕ Line add karo</button>
 
-<div class="card" style="background:#f8fafc;margin:12px 0">
+<div class="card" style="background:#f4f8f4;margin:12px 0">
   <div class="row"><div class="grow">Kul wazan</div><b id="tot-kg">0 kg</b></div>
   <div class="row"><div class="grow">Kul amount</div><b id="tot-amt">Rs 0</b></div>
   <div class="row"><div class="grow">Bakaya (amount − cash)</div><b id="tot-bakaya" class="neg">Rs 0</b></div>
@@ -49,7 +49,7 @@
 
 {# hidden line-row template (JS clones it) #}
 <div id="tpl" style="display:none">
-<div class="line-row" style="border:1.5px solid #e3e8ee;border-radius:12px;padding:12px;margin:8px 0">
+<div class="line-row" style="border:1.5px solid #dde4dd;border-radius:12px;padding:12px;margin:8px 0">
   <div class="row">
     <select name="kind[]" class="kind-sel grow" onchange="applyKind(this)">
       <option value="piece">Piece — qty × rate</option>

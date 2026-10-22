@@ -21,6 +21,7 @@ templates/purchase_form.html
 templates/purchases.html
 templates/stock.html
 templates/stock_manage.html
+templates/stock_manage_item.html
 templates/supplier_form.html
 templates/suppliers.html
 templates/usage_form.html

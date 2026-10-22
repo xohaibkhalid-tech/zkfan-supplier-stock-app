@@ -1,91 +1,36 @@
 {% extends "base.html" %}{% block t %}Manage Items{% endblock %}{% block body %}
-<style>
-  .itemrow[draggable="true"]{cursor:grab}
-  .dropzone{transition:outline-color .15s}
-  .dropzone.drag-over{outline:3px dashed #2e7d32;outline-offset:-3px}
-  .drag-hint{opacity:.55}
-</style>
-<div class="card">
-<div class="row"><h3 class="grow">⚙️ Manage Items</h3>
+<div class="topbar">
+<div class="row"><h2 class="grow">⚙️ Manage Items</h2>
 <a class="btn small gray" href="{{ url_for('stock') }}">← Stock</a></div>
-<div class="hint">Har item ke liye: <b>Group / Section</b> badlein (dropdown se group ya brand section chunein, ya naya naam likh kar banayein — brand ka naam likhein to item us section mein chala jayega), <b>Rename</b> se display naam set karein, <b>Merge</b> se do naam ek item mein ginein, <b>Split</b> se ek item ka hissa naye item mein alag karein. Computer par item ko <span class="drag-hint">⠿</span> se pakad kar group/section card par drag bhi kar sakte hain. Ye sab sirf stock ki display par asar karta hai — purchase history hamesha mehfooz rehti hai.</div>
+<div class="hint">Item par <b>tap</b> karein — sirf usi item ka page khulega, wahan se group/section, naam, split, merge — sab asaan. Ye sab sirf stock ki display par asar karta hai — purchase history hamesha mehfooz rehti hai.</div>
 </div>
+<input type="text" id="item-search" class="search-big" placeholder="🔍 Item dhundhein… (e.g. copper, silk, dabbi)" autocomplete="off">
 {% if pairs %}
 <div class="card">
 <h3>🏷️ Brand Sections</h3>
-<div class="hint">Ye sections Stock page par brand blocks ki surat mein nazar aate hain. Item ko kisi section mein daalne ke liye uske Group dropdown se section chunein — ya item yahan drag kar dein.</div>
-{% for p in pairs %}
-<div class="itemrow dropzone" data-dest="section:{{ p.brand_key }}">
-  <b>🏷️ {{ p.brand }}</b>
-  <div class="hint">{% for m in p.members %}{{ m.name }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+<div class="hint">Ye sections Stock page par brand blocks ki surat mein nazar aate hain. Item ko kisi section mein daalne ke liye uske page par ja kar Group / Section badlein.</div>
+<div class="chips">
+{% for p in pairs %}<span class="chip">🏷️ {{ p.brand }} · {{ p.members|reject('none')|list|length }} items</span>{% endfor %}
 </div>
-{% endfor %}
 </div>
 {% endif %}
+<div id="item-list">
 {% for g in groups %}
-<div class="card dropzone" data-dest="group:{{ g.name }}">
-<h3>📁 {{ g.name }}</h3>
+<div class="group-block">
+<div class="group-title">📁 {{ g.name }}</div>
 {% for x in g.rows %}
-<div class="itemrow" draggable="true" data-key="{{ x.key }}">
-  <div class="row">
-    <div class="grow"><span class="drag-hint">⠿</span> <b>{{ x.name }}</b>
-    {% if x.section %}<span class="badge b-draft">🏷️ section mein hai</span>{% endif %}
-    {% if x.variants|length > 1 %}<br><small class="hint">Shamil naam: {{ x.variants|join(', ') }}</small>{% endif %}
-    </div>
-  </div>
-  <div class="hint">Aaya: {% if x.in_qty %}{{ x.in_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.in_kg|qty }} kg{% endif %}
-  · <b>Bacha: {% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</b></div>
-  <div class="itemctl">
-    <form method="post" action="{{ url_for('stock_move_group') }}">
-      <input type="hidden" name="canonical_key" value="{{ x.key }}">
-      <select name="group_name" title="Group / Section">
-        <optgroup label="Groups">
-        {% for gn in group_names %}<option value="{{ gn }}"{% if gn == x.group and not x.section %} selected{% endif %}>{{ gn }}</option>{% endfor %}
-        </optgroup>
-        {% if brands %}
-        <optgroup label="Brand Sections">
-        {% for bk, disp in brands.items() %}<option value="section:{{ bk }}"{% if x.section == bk %} selected{% endif %}>🏷️ {{ disp }}</option>{% endfor %}
-        </optgroup>
-        {% endif %}
-      </select>
-      <input type="text" name="new_group" placeholder="Ya naya group / section…" size="12">
-      <button class="btn small gray" type="submit">Group</button>
-    </form>
-    <form method="post" action="{{ url_for('stock_rename') }}">
-      <input type="hidden" name="canonical_key" value="{{ x.key }}">
-      <input type="text" name="label" value="{{ x.label }}" placeholder="Display naam" size="14">
-      <button class="btn small gray" type="submit">Rename</button>
-    </form>
-    {% if all_items|length > 1 %}
-    <form method="post" action="{{ url_for('stock_merge') }}" onsubmit="return confirm('Ye item doosre item ke saath merge ho jayega (stock mein ek ginna jayega). Purchase history waisi hi rahegi.')">
-      <input type="hidden" name="variant_key" value="{{ x.key }}">
-      <select name="target_key" title="Merge target" required><option value="" disabled selected>— merge target chunein —</option>{% for t in all_items %}{% if t.key != x.key %}<option value="{{ t.key }}">{{ t.name }}</option>{% endif %}{% endfor %}</select>
-      <button class="btn small gray" type="submit">Merge →</button>
-    </form>
-    {% endif %}
-    <form method="post" action="{{ url_for('stock_split') }}" onsubmit="return confirm('Is item ka hissa naye item mein alag ho jayega. Purchase history waisi hi rahegi.')">
-      <input type="hidden" name="canonical_key" value="{{ x.key }}">
-      <input type="text" name="dst_name" placeholder="Naye item ka naam" size="14" required>
-      {% set mode = split_modes.get(x.key, 'plain') %}
-      {% if mode == 'dhalai' %}
-      <input type="number" step="any" name="body_qty" placeholder="Body qty" size="7">
-      <input type="number" step="any" name="cup_qty" placeholder="Cup qty" size="7">
-      {% elif mode == 'set' %}
-      <input type="number" step="any" name="qty" placeholder="Sets" size="7">
-      {% elif mode == 'piece' %}
-      <input type="number" step="any" name="qty" placeholder="Qty (pcs)" size="7">
-      {% else %}
-      <input type="number" step="any" name="kg" placeholder="Kg" size="7">
-      {% endif %}
-      <button class="btn small gray" type="submit">✂️ Split</button>
-    </form>
-  </div>
-</div>
+<a class="itemlink" href="{{ url_for('stock_manage_item', key=x.key) }}" data-name="{{ x.name|lower }}">
+  <div class="nm">{{ x.name }}{% if x.section %}<span class="badge b-sec">🏷️ {{ brands.get(x.section, x.section) }}</span>{% endif %}{% if x.variants|length > 1 %}<br><small class="hint">Shamil naam: {{ x.variants|join(', ') }}</small>{% endif %}</div>
+  <div class="qty">Bacha: {% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</div>
+  <div class="chev">›</div>
+</a>
 {% endfor %}
 </div>
 {% else %}
 <div class="card">Abhi koi purchased item nahi — pehli purchase ke baad items yahan nazar aayenge.</div>
 {% endfor %}
+<div class="card hidden" id="no-result">Koi item nahi mila.</div>
+</div>
 {% if aliases %}
 <div class="card">
 <h3>🔀 Merged items</h3>
@@ -100,39 +45,28 @@
 </div>
 {% endif %}
 <script>
-// Drag & drop (desktop): item card ko group/section card par drop
-// karein — wahi POST jo Group button karta hai. Mobile par select +
-// button hi reliable rasta hai.
+// Search: client-side filter over the item rows (naam match).
 (function(){
-  var dragKey = null;
-  document.querySelectorAll('.itemrow[data-key]').forEach(function(el){
-    el.addEventListener('dragstart', function(e){
-      dragKey = el.getAttribute('data-key');
-      e.dataTransfer.effectAllowed = 'move';
-      try { e.dataTransfer.setData('text/plain', dragKey); } catch(_){}
+  var box = document.getElementById('item-search');
+  if (!box) return;
+  var links = document.querySelectorAll('#item-list .itemlink');
+  var blocks = document.querySelectorAll('#item-list .group-block');
+  var none = document.getElementById('no-result');
+  box.addEventListener('input', function(){
+    var q = box.value.trim().toLowerCase(), any = false;
+    links.forEach(function(a){
+      var hit = !q || a.getAttribute('data-name').indexOf(q) !== -1;
+      a.style.display = hit ? '' : 'none';
+      if (hit) any = true;
     });
-    el.addEventListener('dragend', function(){ dragKey = null; });
-  });
-  document.querySelectorAll('.dropzone').forEach(function(z){
-    z.addEventListener('dragover', function(e){
-      if (!dragKey) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      z.classList.add('drag-over');
+    blocks.forEach(function(b){
+      var vis = false;
+      b.querySelectorAll('.itemlink').forEach(function(a){
+        if (a.style.display !== 'none') vis = true;
+      });
+      b.style.display = vis ? '' : 'none';
     });
-    z.addEventListener('dragleave', function(){ z.classList.remove('drag-over'); });
-    z.addEventListener('drop', function(e){
-      e.preventDefault();
-      z.classList.remove('drag-over');
-      var key = dragKey || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
-      if (!key) return;
-      var fd = new FormData();
-      fd.append('canonical_key', key);
-      fd.append('dest', z.getAttribute('data-dest'));
-      fetch('{{ url_for("stock_move_group") }}', {method: 'POST', body: fd})
-        .then(function(){ window.location.reload(); })
-        .catch(function(){ window.location.reload(); });
-    });
+    if (none) none.classList.toggle('hidden', any);
   });
 })();
 </script>

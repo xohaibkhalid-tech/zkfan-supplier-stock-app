@@ -1,0 +1,91 @@
+{% extends "base.html" %}{% block t %}{{ x.name }} — Manage{% endblock %}{% block body %}
+<a class="backbtn" href="{{ url_for('stock_manage') }}">← Saare items</a>
+
+<div class="card">
+  <h3 style="font-size:19px">{{ x.name }}{% if x.section %}<span class="badge b-sec">🏷️ {{ brands.get(x.section, x.section) }} section</span>{% else %}<span class="badge b-grp">📁 {{ x.group }}</span>{% endif %}{% if x.low %} <span class="badge b-low">LOW</span>{% endif %}</h3>
+  {% if x.dhalai %}<div class="hint">Body: {{ x.dhalai.body|qty }} · Cup: {{ x.dhalai.cup|qty }} · <b>Sets: {{ x.dhalai.sets|qty }}</b>{% if x.dhalai.extra_body %} · Extra body: {{ x.dhalai.extra_body|qty }}{% endif %}{% if x.dhalai.extra_cup %} · Extra cup: {{ x.dhalai.extra_cup|qty }}{% endif %}</div>{% endif %}
+  <div class="big-qty">Aaya: {% if x.in_qty %}{{ x.in_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.in_kg|qty }} kg{% endif %}
+  · <b>Bacha: {% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</b></div>
+  {% if x.variants|length > 1 %}<div class="hint">Shamil naam: {{ x.variants|join(', ') }}</div>{% endif %}
+</div>
+
+<div class="card">
+<h3>📦 Group / Section badlein</h3>
+<div class="hint">Jahan bhejna hai wo chunein — group ya brand section. Brand ka naam naye naam wale box mein likhein to item us section mein chala jayega.</div>
+<form method="post" action="{{ url_for('stock_move_group') }}">
+  <input type="hidden" name="canonical_key" value="{{ x.key }}">
+  <select name="group_name" title="Group / Section">
+    <optgroup label="Groups">
+    {% for gn in group_names %}<option value="{{ gn }}"{% if gn == x.group and not x.section %} selected{% endif %}>{{ gn }}</option>{% endfor %}
+    </optgroup>
+    {% if brands %}
+    <optgroup label="Brand Sections">
+    {% for bk, disp in brands.items() %}<option value="section:{{ bk }}"{% if x.section == bk %} selected{% endif %}>🏷️ {{ disp }}</option>{% endfor %}
+    </optgroup>
+    {% endif %}
+  </select>
+  <input type="text" name="new_group" placeholder="Ya naya group / section ka naam likhein…">
+  <button class="btn green" type="submit">✔️ Wahan bhej do</button>
+</form>
+</div>
+
+<div class="card">
+<h3>✏️ Naam badlein (Rename)</h3>
+<form method="post" action="{{ url_for('stock_rename') }}">
+  <input type="hidden" name="canonical_key" value="{{ x.key }}">
+  <input type="text" name="label" value="{{ x.label }}" placeholder="Display naam">
+  <button class="btn gray" type="submit">Naam save karein</button>
+</form>
+</div>
+
+<div class="card">
+<h3>✂️ Split — hissa alag item mein</h3>
+<div class="hint">Is item ka kuch hissa naye naam se alag kar dein. Purana hisaab mehfooz rahega.</div>
+<form method="post" action="{{ url_for('stock_split') }}" onsubmit="return confirm('Is item ka hissa naye item mein alag ho jayega. Purchase history waisi hi rahegi.')">
+  <input type="hidden" name="canonical_key" value="{{ x.key }}">
+  <input type="text" name="dst_name" placeholder="Naye item ka naam" required>
+  {% set mode = split_modes.get(x.key, 'plain') %}
+  {% if mode == 'dhalai' %}
+  <div class="flbl">Body qty</div>
+  <input type="number" step="any" name="body_qty" placeholder="e.g. 40">
+  <div class="flbl">Cup qty</div>
+  <input type="number" step="any" name="cup_qty" placeholder="e.g. 40">
+  {% elif mode == 'set' %}
+  <div class="flbl">Sets</div>
+  <input type="number" step="any" name="qty" placeholder="e.g. 100">
+  {% elif mode == 'piece' %}
+  <div class="flbl">Qty (pcs)</div>
+  <input type="number" step="any" name="qty" placeholder="e.g. 50">
+  {% else %}
+  <div class="flbl">Kg</div>
+  <input type="number" step="any" name="kg" placeholder="e.g. 10.5">
+  {% endif %}
+  <button class="btn gray" type="submit">✂️ Split karein</button>
+</form>
+</div>
+
+{% if all_items|length > 1 %}
+<div class="card">
+<h3>🔀 Merge — doosre item ke saath milayein</h3>
+<div class="hint">Ye item doosre item ke saath ek ginna jayega. Purchase history waisi hi rahegi, aur Merged items se wapas alag (Unmerge) bhi ho sakta hai.</div>
+<form method="post" action="{{ url_for('stock_merge') }}" onsubmit="return confirm('Ye item doosre item ke saath merge ho jayega (stock mein ek ginna jayega). Purchase history waisi hi rahegi.')">
+  <input type="hidden" name="variant_key" value="{{ x.key }}">
+  <select name="target_key" title="Merge target" required><option value="" disabled selected>— merge target chunein —</option>{% for t in all_items %}{% if t.key != x.key %}<option value="{{ t.key }}">{{ t.name }}</option>{% endif %}{% endfor %}</select>
+  <button class="btn gray" type="submit">Merge karein</button>
+</form>
+</div>
+{% endif %}
+
+<div class="card">
+<h3>📅 Date-wise history</h3>
+<div class="hist"><b>Total aaya:</b> {% if x.in_qty %}{{ x.in_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.in_kg|qty }} kg{% endif %}</div>
+{% for r in x.detail.receipts %}
+<div class="hist">📥 {{ r.date }} · {{ r.party }} · {% if r.kind == 'dhalai' %}Body: {{ r.body_qty|qty }} · Cup: {{ r.cup_qty|qty }} · {{ r.kg|qty }} kg{% elif r.kind == 'set' %}{{ r.kg|qty }} kg ({{ r.body_qty|qty }} sets){% elif r.kind == 'piece' %}{{ r.qty|qty }} pcs{% else %}{{ r.kg|qty }} kg{% endif %}</div>
+{% endfor %}
+{% for mv in x.detail.usage %}
+<div class="hist">📤 {{ mv.date }} · {% if mv.type == 'SPLIT' %}Split{% elif mv.type == 'OUT' %}Use{% else %}Adjust{% endif %} · {{ mv.qty|qty }} {{ x.unit }}{% if mv.notes %} · <small>{{ mv.notes }}</small>{% endif %}</div>
+{% endfor %}
+<div class="hist"><b>Bacha:</b> {% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</div>
+<a class="btn small gray" href="{{ url_for('material_ledger', item=x.name) }}">Poori History →</a>
+</div>
+{% endblock %}

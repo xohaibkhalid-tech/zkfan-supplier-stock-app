@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v2.5-sections-b"
+VERSION = db.VERSION  # "v3.0-forms-a"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SUPPLIER_STOCK_SECRET", "dev-only-change-me")
@@ -1350,16 +1350,13 @@ def stock():
 @app.route("/stock/manage")
 @owner_required
 def stock_manage():
-    """Owner-only item administration: group/section move, rename,
-    merge, split and the merged-items (aliases) list. The POST
-    endpoints are the same ones the stock page used inline before
-    v2.3. v2.5: move destinations include brand sections, items can
-    be split into new items, and brand blocks are shown as
-    drag-and-drop targets."""
+    """Owner-only item administration — LIST screen (v3.0 forms
+    style): a searchable list of clean item rows; tapping one opens
+    its own page (stock_manage_item) with the group/section move,
+    rename, merge and split forms as separate cards. The POST
+    endpoints are unchanged since v2.3/v2.5."""
     items = purchased_items()
     groups = db.stock_groups(items)
-    group_names = list(db.GROUP_ORDER) + sorted(
-        {g["name"] for g in groups} - set(db.GROUP_ORDER))
     pairs, consumed = db.box_pairs(items)
     pair_by_brand = {p["brand_key"]: p for p in pairs}
     for p in pairs:
@@ -1376,11 +1373,42 @@ def stock_manage():
                 pair_by_brand[bk] = p
             p["members"].append(it)
     return render_template("stock_manage.html", groups=groups,
-                           all_items=items, group_names=group_names,
                            pairs=pairs,
                            brands=db.brand_sections(items),
-                           split_modes=db.split_modes(),
                            aliases=db.list_aliases(items=items))
+
+
+@app.route("/stock/manage/item")
+@owner_required
+def stock_manage_item():
+    """One item's manage page (v3.0 forms style): header card, then
+    one card per job — group/section move, rename, split, merge —
+    plus its date-wise history. Display only; the POST endpoints
+    (stock_move_group / stock_rename / stock_split / stock_merge)
+    and their field names are exactly as before."""
+    key = (request.args.get("key") or "").strip()
+    it = purchased_item(key) if key else None
+    if not it:
+        flash("Item nahi mila", "err")
+        return redirect(url_for("stock_manage"))
+    items = purchased_items()
+    groups = db.stock_groups(items)
+    group_names = list(db.GROUP_ORDER) + sorted(
+        {g["name"] for g in groups} - set(db.GROUP_ORDER))
+    d = db.dhalai_body_cup().get(it["key"])
+    if d:
+        sets = min(d["body"], d["cup"])
+        it["dhalai"] = {
+            "body": d["body"], "cup": d["cup"], "sets": sets,
+            "extra_body": max(0.0, d["body"] - d["cup"]),
+            "extra_cup": max(0.0, d["cup"] - d["body"]),
+        }
+    it["detail"] = db.stock_details().get(
+        it["key"], {"receipts": [], "usage": []})
+    return render_template("stock_manage_item.html", x=it,
+                           all_items=items, group_names=group_names,
+                           brands=db.brand_sections(items),
+                           split_modes=db.split_modes())
 
 
 @app.route("/stock/merge", methods=["POST"])
