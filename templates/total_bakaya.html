@@ -1,0 +1,29 @@
+{% extends "base.html" %}{% block t %}Kul Bakaya{% endblock %}{% block body %}
+<div class="card mt">
+<h3>💰 Kul Bakaya — poora hisaab</h3>
+<table>
+<tr><td>🏁 September ke start mein kul bakaya (purana balance)</td><td class="num"><b>{{ opening_total|rs }}</b></td></tr>
+<tr><td>➕ Us ke baad nayi purchases</td><td class="num"><b>{{ purchases_total|rs }}</b></td></tr>
+<tr><td>➖ Aap ne pay kiya (payments + purchases par cash)</td><td class="num"><b>{{ paid_total|rs }}</b></td></tr>
+<tr><td><b>🟰 Ab kul bakaya</b></td><td class="num big-qty"><b>{{ net|rs }}</b></td></tr>
+</table>
+{% if total_adv %}
+<div class="hint" id="advance">Is ke ilawa parties ke paas hamara advance para hai: <b>{{ total_adv|rs }}</b> — jin parties ko zyada de diya, woh neeche Advance badge ke sath nazar ayengi.</div>
+{% endif %}
+</div>
+
+<div class="card">
+<h3>👥 Parties — outstanding</h3>
+<table>
+<tr><th>Party</th><th class="num">Previous</th><th class="num">Current</th><th class="num">Total</th><th></th></tr>
+{% for x in rows %}
+<tr><td><b>{{ x.row.name }}</b></td>
+<td class="num">{{ x.bal.prev_remaining|rs }}</td>
+<td class="num">{% if x.bal.current_bakaya < 0 %}<span class="badge b-adv">Advance {{ (-x.bal.current_bakaya)|rs }}</span>{% else %}{{ x.bal.current_bakaya|rs }}{% endif %}</td>
+<td class="num">{% if x.out < 0 %}<span class="badge b-adv">Advance {{ (-x.out)|rs }}</span>{% else %}<b>{{ x.out|rs }}</b>{% endif %}</td>
+<td class="num"><a class="link" href="{{ url_for('supplier_ledger', sid=x.row.id) }}">Ledger</a></td></tr>
+{% endfor %}
+</table>
+</div>
+<a class="btn gray" data-cancel href="{{ url_for('dashboard') }}">← Home</a>
+{% endblock %}

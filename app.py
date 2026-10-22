@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v3.4-forms-c"
+VERSION = db.VERSION  # "v3.5-forms-a"
 
 # ---------- statement PDF (reportlab, OPTIONAL dependency) ----------
 # The app must boot and serve everything else even when reportlab is
@@ -366,21 +366,6 @@ def dashboard():
             "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
         materials = con.execute(
             "SELECT * FROM materials WHERE active=1 ORDER BY name").fetchall()
-        recent_pur = con.execute(
-            "SELECT p.*, s.name AS sname FROM purchases p"
-            " JOIN suppliers s ON s.id=p.supplier_id"
-            " ORDER BY p.date DESC, p.id DESC LIMIT 6").fetchall()
-        recent_pay = con.execute(
-            "SELECT p.*, s.name AS sname FROM payments p"
-            " JOIN suppliers s ON s.id=p.supplier_id"
-            " WHERE p.status='active'"
-            " ORDER BY COALESCE(p.date,'9999') DESC, p.id DESC LIMIT 6"
-        ).fetchall()
-        usage7 = con.execute(
-            "SELECT m.name, m.unit, COALESCE(SUM(l.qty),0) AS used"
-            " FROM stock_ledger l JOIN materials m ON m.id=l.material_id"
-            " WHERE l.type='OUT' AND l.date >= date('now','-7 days')"
-            " GROUP BY m.id ORDER BY used DESC").fetchall()
         # v2.2 perf: bulk aggregates on THIS connection — the old code
         # called party_balances()/material_stock() once per row, each
         # opening its own connection (~269 queries for this page).
@@ -391,11 +376,12 @@ def dashboard():
     finally:
         con.close()
 
-    sup_rows, total_due, total_adv = [], 0.0, 0.0
+    # v3.5 (user): home par SIRF rakam wale clickable cards — party-wise
+    # tafseel front par nahi, woh Kul Bakaya wale andar ke page par hai.
+    total_due, total_adv = 0.0, 0.0
     total_prev, total_cur = 0.0, 0.0
     for s in suppliers:
         bal = bals[s["id"]]
-        sup_rows.append({"row": s, "bal": bal, "out": bal["total"]})
         total_prev += bal["prev_remaining"]
         if bal["current_bakaya"] > 0:
             total_cur += bal["current_bakaya"]
@@ -403,19 +389,16 @@ def dashboard():
             total_due += bal["total"]
         else:
             total_adv += -bal["total"]
-    mat_rows, low = [], []
+    low = []
     for m in materials:
         st = stocks.get(m["id"], 0)
-        mat_rows.append({"row": m, "stock": st})
         if m["min_level"] and st < m["min_level"]:
             low.append({"row": m, "stock": st})
     pend, _fail = cashbook_link.queue_counts()
     return render_template(
         "dashboard.html", total_due=total_due, total_adv=total_adv,
         total_prev=total_prev, total_cur=total_cur,
-        suppliers=sup_rows, materials=mat_rows, low_stock=low,
-        recent_pur=recent_pur, recent_pay=recent_pay, usage7=usage7,
-        sync_pending=pend)
+        low_stock=low, sync_pending=pend)
 
 
 # ---------- suppliers / parties (owner) ----------
@@ -816,6 +799,56 @@ def current_bakaya():
             rows.append({"row": s, "bal": bal})
     rows.sort(key=lambda x: -x["bal"]["current_bakaya"])
     return render_template("current_bakaya.html", rows=rows, total=total)
+
+
+@app.route("/bakaya/total")
+@owner_required
+def total_bakaya():
+    """Kul Bakaya — andar wala page (v3.5, user): home par sirf rakam
+    wala card hai; yahan sab se upar poori kahani — September ke start
+    mein kul bakaya kitna tha, us ke baad nayi purchases kitni hui,
+    aap ne kul kitna pay kiya, ab kitna bakaya hai — aur neeche
+    party-wise tafseel (jo pehle home par thi).
+    Identity (db.party_balances wale hi hisaab se):
+        opening + purchases - paid == net outstanding
+    jahan paid = payments (amount+discount, purchase_payment mirrors
+    excluded) + purchases par diya gaya header cash."""
+    con = _connect()
+    try:
+        suppliers = con.execute(
+            "SELECT * FROM suppliers WHERE active=1 ORDER BY name"
+        ).fetchall()
+        openings = {s["id"]: (s["opening_balance"] or 0) for s in suppliers}
+        bals = all_party_balances(con, openings)
+        act = "supplier_id IN (SELECT id FROM suppliers WHERE active=1)"
+        purchases_total = con.execute(
+            "SELECT COALESCE(SUM(amount),0) FROM purchases"
+            f" WHERE status='active' AND {act}").fetchone()[0] or 0
+        cash_total = con.execute(
+            "SELECT COALESCE(SUM(cash_paid),0) FROM purchases"
+            f" WHERE status='active' AND {act}").fetchone()[0] or 0
+        payments_total = con.execute(
+            "SELECT COALESCE(SUM(amount + discount),0) FROM payments"
+            " WHERE status='active' AND kind IN ('payment','advance')"
+            f" AND {act}").fetchone()[0] or 0
+    finally:
+        con.close()
+    opening_total = sum(openings.values())
+    paid_total = payments_total + cash_total
+    net = opening_total + purchases_total - paid_total
+    rows, total_due, total_adv = [], 0.0, 0.0
+    for s in suppliers:
+        bal = bals[s["id"]]
+        rows.append({"row": s, "bal": bal, "out": bal["total"]})
+        if bal["total"] >= 0:
+            total_due += bal["total"]
+        else:
+            total_adv += -bal["total"]
+    rows.sort(key=lambda x: -x["out"])
+    return render_template(
+        "total_bakaya.html", rows=rows, opening_total=opening_total,
+        purchases_total=purchases_total, paid_total=paid_total, net=net,
+        total_due=total_due, total_adv=total_adv)
 
 
 # ---------- purchases v2 (owner) ----------
