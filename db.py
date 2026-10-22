@@ -21,7 +21,7 @@ import sqlite3
 import threading
 from datetime import datetime, date
 
-VERSION = "v2.5-sections-a"
+VERSION = "v2.5-sections-b"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get(

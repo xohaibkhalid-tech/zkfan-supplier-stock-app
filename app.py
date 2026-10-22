@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v2.5-sections-a"
+VERSION = db.VERSION  # "v2.5-sections-b"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SUPPLIER_STOCK_SECRET", "dev-only-change-me")

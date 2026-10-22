@@ -59,7 +59,7 @@
     {% if all_items|length > 1 %}
     <form method="post" action="{{ url_for('stock_merge') }}" onsubmit="return confirm('Ye item doosre item ke saath merge ho jayega (stock mein ek ginna jayega). Purchase history waisi hi rahegi.')">
       <input type="hidden" name="variant_key" value="{{ x.key }}">
-      <select name="target_key" title="Merge target">{% for t in all_items %}{% if t.key != x.key %}<option value="{{ t.key }}">{{ t.name }}</option>{% endif %}{% endfor %}</select>
+      <select name="target_key" title="Merge target" required><option value="" disabled selected>— merge target chunein —</option>{% for t in all_items %}{% if t.key != x.key %}<option value="{{ t.key }}">{{ t.name }}</option>{% endif %}{% endfor %}</select>
       <button class="btn small gray" type="submit">Merge →</button>
     </form>
     {% endif %}
