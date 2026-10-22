@@ -9,4 +9,10 @@
 <a class="btn gray" data-cancel href="{{ url_for('previous_bakaya') }}">Cancel (Esc)</a>
 </form>
 </div>
+
+<div class="card" style="border-color:#e3b7b7;background:#fdf4f4">
+<h4>⚠️ Danger zone</h4>
+<div class="hint">Delete karne se is party ka previous balance khatam ho jayega (0 ho jayega). Agar is balance par payments lag chuki hain to delete ruk jayega — pehle woh payments void/delete karni hongi.</div>
+<form method="post" action="{{ url_for('previous_bakaya_delete', sid=s.id) }}" class="mt" onsubmit="return confirm('Is party ka previous balance delete kar dein?')"><button class="btn red" type="submit">🗑 Delete previous balance</button></form>
+</div>
 {% endblock %}

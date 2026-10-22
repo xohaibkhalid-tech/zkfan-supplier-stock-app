@@ -21,7 +21,7 @@ import sqlite3
 import threading
 from datetime import datetime, date
 
-VERSION = "v3.3-forms-a"
+VERSION = "v3.4-forms-a"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get(

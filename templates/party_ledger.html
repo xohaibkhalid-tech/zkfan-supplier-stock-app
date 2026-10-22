@@ -16,10 +16,11 @@
     </div>
   </div>
   <div class="no-print mt">
-    <button class="btn small" onclick="window.print()">🖨 Print / PDF</button>
+    {% if have_reportlab %}<a class="btn small" href="{{ url_for('export_party_ledger_pdf', sid=s.id) }}" target="_blank" rel="noopener">📄 PDF Statement</a>
+    {% else %}<button class="btn small" onclick="window.print()">🖨 Print / PDF</button>{% endif %}
     <a class="btn small gray" href="{{ url_for('export_party_ledger', sid=s.id) }}">📥 Excel</a>
-    {% if have_reportlab %}<a class="btn small gray" href="{{ url_for('export_party_ledger_pdf', sid=s.id) }}">📄 PDF</a>{% endif %}
-    <a class="btn small green" href="{{ url_for('payment_add', supplier_id=s.id) }}">💸 Payment do</a>
+    <a class="btn small green" href="{{ url_for('purchase_add', supplier_id=s.id, next=url_for('supplier_ledger', sid=s.id)) }}">🧾 Nayi Purchase</a>
+    <a class="btn small green" href="{{ url_for('payment_add', supplier_id=s.id, next=url_for('supplier_ledger', sid=s.id)) }}">💸 Payment do</a>
     <a class="btn small gray" href="{{ url_for('supplier_edit', sid=s.id) }}">✏️ Edit party</a>
     <a class="btn small gray" data-cancel href="{{ url_for('suppliers') }}">← Parties</a>
   </div>
@@ -52,14 +53,9 @@
   <td class="num">{{ r.minus|rs if r.minus else '—' }}</td>
   <td class="num"><b>{{ r.bal|rs }}</b></td>
   <td class="no-print" style="white-space:nowrap">{% if not r.void %}
-    {% if r.ekind == 'opening' %}<a class="btn small gray" href="{{ url_for('previous_bakaya_edit', sid=r.eid) }}">✏️ Edit</a>
-    <form method="post" action="{{ url_for('previous_bakaya_delete', sid=r.eid) }}" style="display:inline" onsubmit="return confirm('Is party ka previous balance delete kar dein?')"><button class="btn small red" type="submit">🗑</button></form>
-    {% elif r.ekind == 'purchase' %}<a class="btn small gray" href="{{ url_for('purchase_edit', pid=r.eid) }}">✏️ Edit</a>
-    <a class="btn small gray" href="{{ url_for('purchase_void', pid=r.eid) }}">🚫 Void</a>
-    <form method="post" action="{{ url_for('purchase_delete', pid=r.eid) }}" style="display:inline" onsubmit="return confirm('Purchase delete kar dein? Stock bhi wapas ho jayega.')"><button class="btn small red" type="submit">🗑</button></form>
-    {% elif r.ekind == 'payment' %}<a class="btn small gray" href="{{ url_for('payment_edit', pid=r.eid) }}">✏️ Edit</a>
-    <a class="btn small gray" href="{{ url_for('payment_void', pid=r.eid) }}">🚫 Void</a>
-    <form method="post" action="{{ url_for('payment_delete', pid=r.eid) }}" style="display:inline" onsubmit="return confirm('Payment delete kar dein?')"><button class="btn small red" type="submit">🗑</button></form>
+    {% if r.ekind == 'opening' %}<a class="btn small green" href="{{ url_for('previous_bakaya_edit', sid=r.eid) }}">✏️ Edit</a>
+    {% elif r.ekind == 'purchase' %}<a class="btn small green" href="{{ url_for('purchase_edit', pid=r.eid, next=url_for('supplier_ledger', sid=s.id)) }}">✏️ Edit</a>
+    {% elif r.ekind == 'payment' %}<a class="btn small green" href="{{ url_for('payment_edit', pid=r.eid, next=url_for('supplier_ledger', sid=s.id)) }}">✏️ Edit</a>
     {% endif %}{% endif %}</td>
 </tr>
 {% endfor %}

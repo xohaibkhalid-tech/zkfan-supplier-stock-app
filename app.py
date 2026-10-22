@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v3.3-forms-a"
+VERSION = db.VERSION  # "v3.4-forms-a"
 
 # ---------- statement PDF (reportlab, OPTIONAL dependency) ----------
 # The app must boot and serve everything else even when reportlab is
@@ -133,6 +133,21 @@ def fnum(v, default=0.0):
         return float(str(v).strip() or default)
     except (TypeError, ValueError):
         return default
+
+
+def _safe_next():
+    """Safe internal redirect target from a `next` form field / query
+    arg (v3.4, return-to-ledger): only a local path starting with
+    exactly one '/' is honoured — '//host' (protocol-relative) and
+    '/\\host' tricks are rejected, as is anything not starting with
+    '/'. Returns '' when absent/unsafe so callers fall back to their
+    default redirect."""
+    nxt = (request.form.get("next") or request.args.get("next")
+           or "").strip()
+    if nxt.startswith("/") and not nxt.startswith("//") \
+            and not nxt.startswith("/\\"):
+        return nxt
+    return ""
 
 
 def current_user():
@@ -1026,17 +1041,18 @@ def purchase_add():
             flash("Party aur kam az kam ek line zaroori hai", "err")
             return render_template("purchase_form.html", p=None, lines=[],
                                    suppliers=suppliers, methods=methods,
-                                   today=today_iso())
+                                   today=today_iso(), next_url=_safe_next())
         pid = next_id("PUR", "purchases")
         amount, _kg = _save_purchase(pid, header, lines, u["username"], True)
         audit(u["username"], "add", "purchase", pid,
               f"{header['supplier_id']} {amount}")
         flash(f"Purchase save ho gayi ({pid}) — {fmt_rs(amount)}", "ok")
-        return redirect(url_for("purchases"))
+        return redirect(_safe_next() or url_for("purchases"))
     return render_template("purchase_form.html", p=None, lines=[],
                            suppliers=suppliers, methods=methods,
                            today=today_iso(),
-                           preselect=request.args.get("supplier_id", ""))
+                           preselect=request.args.get("supplier_id", ""),
+                           next_url=_safe_next())
 
 
 @app.route("/purchases/<pid>/edit", methods=["GET", "POST"])
@@ -1061,14 +1077,15 @@ def purchase_edit(pid):
             flash("Party aur kam az kam ek line zaroori hai", "err")
             return render_template("purchase_form.html", p=p,
                                    lines=_lines_of(pid), suppliers=suppliers,
-                                   methods=methods, today=today_iso())
+                                   methods=methods, today=today_iso(),
+                                   next_url=_safe_next())
         amount, _kg = _save_purchase(pid, header, lines, u["username"], False)
         audit(u["username"], "edit", "purchase", pid, f"{amount}")
         flash(f"Purchase update ho gayi ({pid}) — {fmt_rs(amount)}", "ok")
-        return redirect(url_for("purchases"))
+        return redirect(_safe_next() or url_for("purchases"))
     return render_template("purchase_form.html", p=p, lines=_lines_of(pid),
                            suppliers=suppliers, methods=methods,
-                           today=today_iso())
+                           today=today_iso(), next_url=_safe_next())
 
 
 @app.route("/purchases/<pid>/void", methods=["GET", "POST"])
@@ -1203,7 +1220,8 @@ def payment_add():
             flash("Party aur raqam (amount) zaroori hai", "err")
             return render_template("payment_form.html", p=None,
                                    suppliers=suppliers, purchases=purs,
-                                   methods=methods, today=today_iso())
+                                   methods=methods, today=today_iso(),
+                                   next_url=_safe_next())
         pid = next_id("PAY", "payments")
         con = _connect()
         try:
@@ -1226,12 +1244,13 @@ def payment_add():
             con.close()
         audit(u["username"], "add", "payment", pid, f"{kind} {amt}")
         flash(f"Payment save ho gayi ({pid}) — {fmt_rs(amt)}", "ok")
-        return redirect(url_for("payments"))
+        return redirect(_safe_next() or url_for("payments"))
     return render_template(
         "payment_form.html", p=None, suppliers=suppliers, purchases=purs,
         methods=methods, today=today_iso(),
         preselect=request.args.get("supplier_id", ""),
-        pre_purchase=request.args.get("purchase_id", ""))
+        pre_purchase=request.args.get("purchase_id", ""),
+        next_url=_safe_next())
 
 
 @app.route("/payments/<pid>/edit", methods=["GET", "POST"])
@@ -1256,7 +1275,8 @@ def payment_edit(pid):
             flash("Raqam zaroori hai", "err")
             return render_template("payment_form.html", p=p,
                                    suppliers=suppliers, purchases=purs,
-                                   methods=methods, today=today_iso())
+                                   methods=methods, today=today_iso(),
+                                   next_url=_safe_next())
         kind = request.form.get("kind") or "payment"
         if kind not in ("payment", "advance"):
             kind = "payment"
@@ -1279,10 +1299,10 @@ def payment_edit(pid):
             con.close()
         audit(u["username"], "edit", "payment", pid, f"{amt}")
         flash("Payment update ho gayi", "ok")
-        return redirect(url_for("payments"))
+        return redirect(_safe_next() or url_for("payments"))
     return render_template("payment_form.html", p=p, suppliers=suppliers,
                            purchases=purs, methods=methods,
-                           today=today_iso())
+                           today=today_iso(), next_url=_safe_next())
 
 
 @app.route("/payments/<pid>/void", methods=["GET", "POST"])

@@ -2,6 +2,7 @@
 <div class="card">
 <h3>{{ '✏️ Edit payment' if p else '💸 Nayi payment' }}</h3>
 <form method="post" class="entry-form">
+<input type="hidden" name="next" value="{{ next_url or '' }}">
 <label>Party *</label>
 <select name="supplier_id" required>
   <option value="">— party chunein —</option>
@@ -45,4 +46,15 @@
 <a class="btn gray" data-cancel href="{{ url_for('payments') }}">Cancel (Esc)</a>
 </form>
 </div>
+
+{% if p %}
+<div class="card" style="border-color:#e3b7b7;background:#fdf4f4">
+<h4>⚠️ Danger zone — {{ p.id }}</h4>
+<div class="hint">Void karne se payment cancel ho jati hai — record rehta hai (audit ke liye). Delete karne se record hamesha ke liye khatam ho jata hai.</div>
+<div class="mt">
+<a class="btn gray" href="{{ url_for('payment_void', pid=p.id) }}">🚫 Void payment</a>
+<form method="post" action="{{ url_for('payment_delete', pid=p.id) }}" style="display:inline" onsubmit="return confirm('Payment delete kar dein? Ye wapas nahi hoga!')"><button class="btn red" type="submit">🗑 Delete payment</button></form>
+</div>
+</div>
+{% endif %}
 {% endblock %}
