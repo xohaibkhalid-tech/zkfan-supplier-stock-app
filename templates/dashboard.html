@@ -1,7 +1,8 @@
 {% extends "base.html" %}{% block t %}Home{% endblock %}{% block body %}
+<style>a.kpi{display:block;text-decoration:none;color:inherit}</style>
 <div class="grid2 mt">
-  <div class="kpi prev"><div class="lbl">PREVIOUS BAKAYA (purana balance)</div><div class="v neg">{{ total_prev|rs }}</div></div>
-  <div class="kpi cur"><div class="lbl">CURRENT BAKAYA (nayi purchases)</div><div class="v neg">{{ total_cur|rs }}</div></div>
+  <a class="kpi prev" href="{{ url_for('previous_bakaya') }}"><div class="lbl">PREVIOUS BAKAYA (purana balance)</div><div class="v neg">{{ total_prev|rs }}</div><div class="hint">Detail ke liye tap karein ›</div></a>
+  <a class="kpi cur" href="{{ url_for('current_bakaya') }}"><div class="lbl">CURRENT BAKAYA (nayi purchases)</div><div class="v neg">{{ total_cur|rs }}</div><div class="hint">Detail ke liye tap karein ›</div></a>
 </div>
 <div class="grid2 mt">
   <div class="kpi kul"><div class="lbl">KUL BAKAYA (parties ko dena hai)</div><div class="v neg">{{ total_due|rs }}</div></div>

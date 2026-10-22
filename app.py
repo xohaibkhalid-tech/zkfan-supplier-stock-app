@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v3.0-forms-a"
+VERSION = db.VERSION  # "v3.1-forms-a"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SUPPLIER_STOCK_SECRET", "dev-only-change-me")
@@ -620,6 +620,155 @@ def supplier_ledger(sid):
     return render_template("party_ledger.html", s=s, rows=rows, balance=bal,
                            outstanding=split["total"],
                            split=split)
+
+
+# ---------- bakaya drill-down (owner, v3.1) ----------
+
+@app.route("/bakaya/previous")
+@owner_required
+def previous_bakaya():
+    """Previous Bakaya detail — the old Previous Balances Form as a live
+    page: every active party's opening (previous) balance, the payments
+    already marked against it (applies_to='previous') and what remains.
+    The grand total is exactly the dashboard's PREVIOUS BAKAYA figure
+    (same bulk split math, same active-party set)."""
+    con = _connect()
+    try:
+        suppliers = con.execute(
+            "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+        bals = all_party_balances(
+            con, {s["id"]: (s["opening_balance"] or 0) for s in suppliers})
+    finally:
+        con.close()
+    rows, total = [], 0.0
+    for s in suppliers:
+        bal = bals[s["id"]]
+        total += bal["prev_remaining"]
+        if (s["opening_balance"] or 0) > 0:
+            rows.append({"row": s, "bal": bal})
+    return render_template("previous_bakaya.html", rows=rows, total=total)
+
+
+@app.route("/bakaya/previous/<sid>/edit", methods=["GET", "POST"])
+@owner_required
+def previous_bakaya_edit(sid):
+    """Edit ONE party's previous (opening) balance. Guard: the new amount
+    may not drop below the payments already marked applies_to='previous'
+    for this party — those payments were made against this balance, so a
+    smaller balance would corrupt the split math (party_balances)."""
+    u = current_user()
+    con = _connect()
+    try:
+        s = con.execute("SELECT * FROM suppliers WHERE id=?",
+                        (sid,)).fetchone()
+        if not s:
+            abort(404)
+        bal = party_balances(sid, con)
+    finally:
+        con.close()
+    if request.method == "POST":
+        raw = (request.form.get("opening_balance") or "").strip()
+        try:
+            amount = float(raw.replace(",", ""))
+        except ValueError:
+            amount = -1
+        if amount < 0:
+            flash("Rakam sahi likhein — 0 ya us se zyada ho", "err")
+            return render_template("previous_bakaya_form.html", s=s, bal=bal)
+        if amount < bal["prev_paid"] - 0.009:
+            flash(f"Ye balance {fmt_rs(bal['prev_paid'])} se kam nahi ho"
+                  " sakta — is party ke previous balance par itni payments"
+                  " pehle hi lag chuki hain", "err")
+            return render_template("previous_bakaya_form.html", s=s, bal=bal)
+        con = _connect()
+        try:
+            con.execute(
+                "UPDATE suppliers SET opening_balance=? WHERE id=?",
+                (amount, sid))
+            con.commit()
+        finally:
+            con.close()
+        audit(u["username"], "edit", "previous_balance", sid,
+              f"{s['name']}: {bal['opening']} -> {amount}")
+        flash(f"{s['name']} ka previous balance update ho gaya:"
+              f" {fmt_rs(amount)}", "ok")
+        return redirect(url_for("previous_bakaya"))
+    return render_template("previous_bakaya_form.html", s=s, bal=bal)
+
+
+@app.route("/bakaya/previous/<sid>/delete", methods=["POST"])
+@owner_required
+def previous_bakaya_delete(sid):
+    """Remove ONE party's previous balance (opening_balance -> 0).
+    BLOCKED while any active payment is marked against it — deleting the
+    balance under live payments would corrupt the split math. Zeroing is
+    enough: every display derives prev_remaining from this column via
+    party_balances(), so the party's previous outstanding becomes 0
+    everywhere at once (dashboard, this page, party ledger)."""
+    u = current_user()
+    con = _connect()
+    try:
+        s = con.execute("SELECT * FROM suppliers WHERE id=?",
+                        (sid,)).fetchone()
+        if not s:
+            abort(404)
+        bal = party_balances(sid, con)
+        if bal["prev_paid"] > 0.009:
+            flash(f"{s['name']} ka previous balance delete nahi ho sakta"
+                  f" — is par {fmt_rs(bal['prev_paid'])} payments lag"
+                  " chuki hain. Pehle woh payments void/delete karein,"
+                  " phir delete hoga", "err")
+            return redirect(url_for("previous_bakaya"))
+        con.execute(
+            "UPDATE suppliers SET opening_balance=0 WHERE id=?", (sid,))
+        con.commit()
+    finally:
+        con.close()
+    audit(u["username"], "delete", "previous_balance", sid,
+          f"{s['name']}: {bal['opening']}")
+    flash(f"{s['name']} ka previous balance delete ho gaya", "ok")
+    return redirect(url_for("previous_bakaya"))
+
+
+@app.route("/bakaya/current")
+@owner_required
+def current_bakaya():
+    """Current Bakaya detail — every ACTIVE purchase that still carries
+    bakaya (amount - header cash - linked later payments > 0), newest
+    first, exactly like the Purchases Form. Rows reuse the existing
+    purchase edit / void / delete flows. The grand total is exactly the
+    dashboard's CURRENT BAKAYA figure (positive per-party current_bakaya
+    values summed) — note it can differ from the row sum when a party
+    also has unlinked 'current' payments, spill or advances."""
+    con = _connect()
+    try:
+        suppliers = con.execute(
+            "SELECT id, opening_balance FROM suppliers WHERE active=1"
+        ).fetchall()
+        bals = all_party_balances(
+            con, {s["id"]: (s["opening_balance"] or 0) for s in suppliers})
+        total = sum(b["current_bakaya"] for b in bals.values()
+                    if b["current_bakaya"] > 0)
+        purs = con.execute(
+            "SELECT p.*, s.name AS sname FROM purchases p"
+            " JOIN suppliers s ON s.id=p.supplier_id"
+            " WHERE p.status='active' AND s.active=1"
+            " ORDER BY p.date DESC, p.id DESC").fetchall()
+        linked = _bulk_linked(con, [p["id"] for p in purs])
+    finally:
+        con.close()
+    rows, party_tot = [], {}
+    for p in purs:
+        link = linked.get(p["id"], 0)
+        bakaya = (p["amount"] or 0) - (p["cash_paid"] or 0) - link
+        if bakaya <= 0.009:
+            continue
+        rows.append({"row": p, "linked": link, "bakaya": bakaya,
+                     "cash_diya": (p["cash_paid"] or 0) + link})
+        party_tot[p["sname"]] = party_tot.get(p["sname"], 0.0) + bakaya
+    party_rows = sorted(party_tot.items(), key=lambda kv: -kv[1])
+    return render_template("current_bakaya.html", rows=rows, total=total,
+                           party_rows=party_rows)
 
 
 # ---------- purchases v2 (owner) ----------

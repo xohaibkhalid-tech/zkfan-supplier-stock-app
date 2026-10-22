@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block t %}Previous Bakaya{% endblock %}{% block body %}
+<div class="card mt">
+<h3>🕰️ Previous Bakaya (purana balance)</h3>
+<div class="hint">Har party ka purana balance, us par lagi hui payments aur bacha hua — bilkul Previous Balances Form ki tarah. Edit/Delete har row ke saath hai.</div>
+<div class="big-qty">Kul Previous Bakaya: <b>{{ total|rs }}</b></div>
+</div>
+
+<div class="card">
+<table>
+<tr><th>Party</th><th class="num">Previous balance</th><th class="num">Payments lagi</th><th class="num">Bacha</th><th></th></tr>
+{% for x in rows %}
+<tr>
+<td><b>{{ x.row.name }}</b></td>
+<td class="num">{{ x.bal.opening|rs }}</td>
+<td class="num">{{ x.bal.prev_paid|rs }}</td>
+<td class="num"><b>{{ x.bal.prev_remaining|rs }}</b></td>
+<td class="num" style="white-space:nowrap">
+<a class="btn small gray" href="{{ url_for('previous_bakaya_edit', sid=x.row.id) }}">✏️ Edit</a>
+<form method="post" action="{{ url_for('previous_bakaya_delete', sid=x.row.id) }}" style="display:inline" onsubmit="return confirm('Is party ka previous balance delete kar dein?')"><button class="btn small red" type="submit">🗑 Delete</button></form>
+</td></tr>
+{% else %}
+<tr><td colspan="5" class="hint">Kisi party ka previous balance nahi hai.</td></tr>
+{% endfor %}
+</table>
+</div>
+<a class="btn gray" data-cancel href="{{ url_for('dashboard') }}">← Home</a>
+{% endblock %}

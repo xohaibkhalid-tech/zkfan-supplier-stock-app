@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block t %}Previous balance edit{% endblock %}{% block body %}
+<div class="card">
+<h3>✏️ Previous balance — {{ s.name }}</h3>
+<div class="hint">Abhi ka previous balance: <b>{{ bal.opening|rs }}</b> · Is par payments lagi hui: {{ bal.prev_paid|rs }} · Bacha hua: <b>{{ bal.prev_remaining|rs }}</b></div>
+<form method="post" class="entry-form">
+<label>Naya previous balance — Rs *</label>
+<input name="opening_balance" type="number" step="any" min="0" required autofocus value="{{ bal.opening|qty }}">
+<button class="btn green" type="submit">💾 Save (Enter)</button>
+<a class="btn gray" data-cancel href="{{ url_for('previous_bakaya') }}">Cancel (Esc)</a>
+</form>
+</div>
+{% endblock %}
