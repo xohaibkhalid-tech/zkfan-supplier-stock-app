@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v3.4-forms-a"
+VERSION = db.VERSION  # "v3.4-forms-b"
 
 # ---------- statement PDF (reportlab, OPTIONAL dependency) ----------
 # The app must boot and serve everything else even when reportlab is
@@ -2375,7 +2375,7 @@ def export_party_ledger_pdf(sid):
     finally:
         con.close()
     buf = _statement_pdf_bytes(s, rows, bal, split)
-    return send_file(buf, mimetype="application/pdf", as_attachment=True,
+    return send_file(buf, mimetype="application/pdf", as_attachment=False,
                      download_name=f"statement_{s['name']}.pdf")
 
 
