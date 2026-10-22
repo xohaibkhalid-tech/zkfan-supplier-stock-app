@@ -41,7 +41,7 @@
 
 <div class="card">
 <table>
-<tr><th>Date</th><th>Type</th><th>Detail</th><th class="num">Plus</th><th class="num">Minus</th><th class="num">Balance</th></tr>
+<tr><th>Date</th><th>Type</th><th>Detail</th><th class="num">Plus</th><th class="num">Minus</th><th class="num">Balance</th><th></th></tr>
 {% for r in rows %}
 <tr class="{{ 'struck' if r.void }}">
   <td>{{ r.date }}</td>
@@ -50,9 +50,19 @@
   <td class="num">{{ r.plus|rs if r.plus else '—' }}</td>
   <td class="num">{{ r.minus|rs if r.minus else '—' }}</td>
   <td class="num"><b>{{ r.bal|rs }}</b></td>
+  <td style="white-space:nowrap">{% if not r.void %}
+    {% if r.ekind == 'opening' %}<a class="btn small gray" href="{{ url_for('previous_bakaya_edit', sid=r.eid) }}">✏️ Edit</a>
+    <form method="post" action="{{ url_for('previous_bakaya_delete', sid=r.eid) }}" style="display:inline" onsubmit="return confirm('Is party ka previous balance delete kar dein?')"><button class="btn small red" type="submit">🗑</button></form>
+    {% elif r.ekind == 'purchase' %}<a class="btn small gray" href="{{ url_for('purchase_edit', pid=r.eid) }}">✏️ Edit</a>
+    <a class="btn small gray" href="{{ url_for('purchase_void', pid=r.eid) }}">🚫 Void</a>
+    <form method="post" action="{{ url_for('purchase_delete', pid=r.eid) }}" style="display:inline" onsubmit="return confirm('Purchase delete kar dein? Stock bhi wapas ho jayega.')"><button class="btn small red" type="submit">🗑</button></form>
+    {% elif r.ekind == 'payment' %}<a class="btn small gray" href="{{ url_for('payment_edit', pid=r.eid) }}">✏️ Edit</a>
+    <a class="btn small gray" href="{{ url_for('payment_void', pid=r.eid) }}">🚫 Void</a>
+    <form method="post" action="{{ url_for('payment_delete', pid=r.eid) }}" style="display:inline" onsubmit="return confirm('Payment delete kar dein?')"><button class="btn small red" type="submit">🗑</button></form>
+    {% endif %}{% endif %}</td>
 </tr>
 {% endfor %}
-<tr><td colspan="5" style="text-align:right"><b>Final outstanding</b></td>
+<tr><td colspan="6" style="text-align:right"><b>Final outstanding</b></td>
 <td class="num"><b>{{ balance|rs }}</b></td></tr>
 </table>
 {% if balance < 0 %}<div class="alert">ℹ️ Final balance negative hai — matlab <b>Advance {{ (-balance)|rs }}</b> party ke paas hamara para hai.</div>{% endif %}

@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v3.1-forms-a"
+VERSION = db.VERSION  # "v3.2-forms-a"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SUPPLIER_STOCK_SECRET", "dev-only-change-me")
@@ -548,7 +548,7 @@ def _ledger_rows(s, con=None):
     rows.append({"date": s["opening_date"] or "—", "type": "Opening",
                  "ref": "—", "detail": "Previous balance",
                  "plus": bal, "minus": 0, "bal": bal, "void": False,
-                 "tag": ""})
+                 "tag": "", "ekind": "opening", "eid": s["id"]})
     events = []
     for p in purs:
         events.append((p["date"] or "", 0, "PUR", p))
@@ -566,7 +566,7 @@ def _ledger_rows(s, con=None):
                 "detail": lines_summary(lines.get(p["id"], []))
                           + (f" — {p['notes']}" if p["notes"] else ""),
                 "plus": amt, "minus": 0, "bal": bal, "void": void,
-                "tag": ""})
+                "tag": "", "ekind": "purchase", "eid": p["id"]})
             m = mirrors.get(p["id"])
             if m:
                 mvoid = m["status"] != "active" or void
@@ -577,7 +577,8 @@ def _ledger_rows(s, con=None):
                     "ref": m["id"],
                     "detail": f"{p['id']} cash — {m['method_name'] or 'Cash'}",
                     "plus": 0, "minus": m["amount"] or 0, "bal": bal,
-                    "void": mvoid, "tag": "Current"})
+                    "void": mvoid, "tag": "Current",
+                    "ekind": "purchase", "eid": p["id"]})
         else:
             void = p["status"] != "active"
             amt = p["amount"] or 0
@@ -600,7 +601,8 @@ def _ledger_rows(s, con=None):
             rows.append({"date": p["date"] or "—", "type": label,
                          "ref": p["id"], "detail": det.strip(" ·"),
                          "plus": 0, "minus": amt + disc, "bal": bal,
-                         "void": void, "tag": tag})
+                         "void": void, "tag": tag,
+                         "ekind": "payment", "eid": p["id"]})
     return rows, bal
 
 
@@ -627,11 +629,13 @@ def supplier_ledger(sid):
 @app.route("/bakaya/previous")
 @owner_required
 def previous_bakaya():
-    """Previous Bakaya detail — the old Previous Balances Form as a live
-    page: every active party's opening (previous) balance, the payments
-    already marked against it (applies_to='previous') and what remains.
-    The grand total is exactly the dashboard's PREVIOUS BAKAYA figure
-    (same bulk split math, same active-party set)."""
+    """Previous Bakaya — LEVEL 1 (v3.2): ONLY party rows (name + previous
+    remaining + ›). Tapping a party opens its full date-wise ledger
+    (supplier_ledger) where the opening balance, purchases and payments
+    are all editable. The grand total is exactly the dashboard's
+    PREVIOUS BAKAYA figure (same bulk split math, same active-party
+    set). Parties whose previous balance is fully paid (remaining 0)
+    drop off this list."""
     con = _connect()
     try:
         suppliers = con.execute(
@@ -644,8 +648,9 @@ def previous_bakaya():
     for s in suppliers:
         bal = bals[s["id"]]
         total += bal["prev_remaining"]
-        if (s["opening_balance"] or 0) > 0:
+        if bal["prev_remaining"] > 0.009:
             rows.append({"row": s, "bal": bal})
+    rows.sort(key=lambda x: -x["bal"]["prev_remaining"])
     return render_template("previous_bakaya.html", rows=rows, total=total)
 
 
@@ -730,45 +735,54 @@ def previous_bakaya_delete(sid):
     return redirect(url_for("previous_bakaya"))
 
 
-@app.route("/bakaya/current")
-@owner_required
-def current_bakaya():
-    """Current Bakaya detail — every ACTIVE purchase that still carries
-    bakaya (amount - header cash - linked later payments > 0), newest
-    first, exactly like the Purchases Form. Rows reuse the existing
-    purchase edit / void / delete flows. The grand total is exactly the
-    dashboard's CURRENT BAKAYA figure (positive per-party current_bakaya
-    values summed) — note it can differ from the row sum when a party
-    also has unlinked 'current' payments, spill or advances."""
-    con = _connect()
-    try:
-        suppliers = con.execute(
-            "SELECT id, opening_balance FROM suppliers WHERE active=1"
-        ).fetchall()
-        bals = all_party_balances(
-            con, {s["id"]: (s["opening_balance"] or 0) for s in suppliers})
-        total = sum(b["current_bakaya"] for b in bals.values()
-                    if b["current_bakaya"] > 0)
-        purs = con.execute(
-            "SELECT p.*, s.name AS sname FROM purchases p"
-            " JOIN suppliers s ON s.id=p.supplier_id"
-            " WHERE p.status='active' AND s.active=1"
-            " ORDER BY p.date DESC, p.id DESC").fetchall()
-        linked = _bulk_linked(con, [p["id"] for p in purs])
-    finally:
-        con.close()
-    rows, party_tot = [], {}
+def _bakaya_purchase_rows(con):
+    """Active purchases of active parties that still carry bakaya
+    (amount - header cash - linked later payments > 0), newest first.
+    Single source for the Current Bakaya Excel export (v3.2)."""
+    purs = con.execute(
+        "SELECT p.*, s.name AS sname FROM purchases p"
+        " JOIN suppliers s ON s.id=p.supplier_id"
+        " WHERE p.status='active' AND s.active=1"
+        " ORDER BY p.date DESC, p.id DESC").fetchall()
+    linked = _bulk_linked(con, [p["id"] for p in purs])
+    out = []
     for p in purs:
         link = linked.get(p["id"], 0)
         bakaya = (p["amount"] or 0) - (p["cash_paid"] or 0) - link
         if bakaya <= 0.009:
             continue
-        rows.append({"row": p, "linked": link, "bakaya": bakaya,
-                     "cash_diya": (p["cash_paid"] or 0) + link})
-        party_tot[p["sname"]] = party_tot.get(p["sname"], 0.0) + bakaya
-    party_rows = sorted(party_tot.items(), key=lambda kv: -kv[1])
-    return render_template("current_bakaya.html", rows=rows, total=total,
-                           party_rows=party_rows)
+        out.append({"row": p, "linked": link, "bakaya": bakaya,
+                    "cash_diya": (p["cash_paid"] or 0) + link})
+    return out
+
+
+@app.route("/bakaya/current")
+@owner_required
+def current_bakaya():
+    """Current Bakaya — LEVEL 1 (v3.2): ONLY party rows (name + current
+    bakaya + ›). Tapping a party opens its full date-wise ledger
+    (supplier_ledger) where every purchase/payment is editable. The
+    grand total is exactly the dashboard's CURRENT BAKAYA figure
+    (positive per-party current_bakaya values summed — the dashboard's
+    own rule)."""
+    con = _connect()
+    try:
+        suppliers = con.execute(
+            "SELECT * FROM suppliers WHERE active=1 ORDER BY name"
+        ).fetchall()
+        bals = all_party_balances(
+            con, {s["id"]: (s["opening_balance"] or 0) for s in suppliers})
+    finally:
+        con.close()
+    rows, total = [], 0.0
+    for s in suppliers:
+        bal = bals[s["id"]]
+        if bal["current_bakaya"] > 0:
+            total += bal["current_bakaya"]
+        if bal["current_bakaya"] > 0.009:
+            rows.append({"row": s, "bal": bal})
+    rows.sort(key=lambda x: -x["bal"]["current_bakaya"])
+    return render_template("current_bakaya.html", rows=rows, total=total)
 
 
 # ---------- purchases v2 (owner) ----------
@@ -2009,6 +2023,54 @@ def export_xlsx(name):
                            r["purchase_id"] or "", r["status"],
                            r["notes"] or ""])
             return _finish_xlsx(ws, "payments.xlsx", H)
+        if name == "previous-bakaya":
+            # v3.2: the Previous Balances Form as a sheet — one row per
+            # party that HAS a previous (opening) balance.
+            rows = con.execute(
+                "SELECT * FROM suppliers WHERE active=1 ORDER BY name"
+            ).fetchall()
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Previous Bakaya"
+            H = ["Party", "Opening (Rs)", "Payments Against Previous (Rs)",
+                 "Remaining (Rs)"]
+            ws.append(H)
+            bals = all_party_balances(
+                con, {r["id"]: (r["opening_balance"] or 0) for r in rows})
+            for r in rows:
+                if (r["opening_balance"] or 0) <= 0:
+                    continue
+                bal = bals[r["id"]]
+                ws.append([r["name"], round(bal["opening"], 0),
+                           round(bal["prev_paid"], 0),
+                           round(bal["prev_remaining"], 0)])
+            return _finish_xlsx(ws, "previous-bakaya.xlsx", H)
+        if name == "current-bakaya":
+            # v3.2: every bakaya-carrying purchase, grouped by party
+            # with a subtotal row under each party.
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Current Bakaya"
+            H = ["Date", "Party", "Purchase No", "Total (Rs)",
+                 "Cash Diya (Rs)", "Bakaya Bacha (Rs)"]
+            ws.append(H)
+            brows = _bakaya_purchase_rows(con)
+            by_party = {}
+            for x in brows:
+                by_party.setdefault(x["row"]["sname"], []).append(x)
+            ordered = sorted(
+                by_party.items(),
+                key=lambda kv: -sum(x["bakaya"] for x in kv[1]))
+            for sname, xs in ordered:
+                for x in xs:
+                    p = x["row"]
+                    ws.append([p["date"], sname, p["id"],
+                               round(p["amount"] or 0, 0),
+                               round(x["cash_diya"], 0),
+                               round(x["bakaya"], 0)])
+                ws.append(["", sname, "Subtotal", "", "",
+                           round(sum(x["bakaya"] for x in xs), 0)])
+            return _finish_xlsx(ws, "current-bakaya.xlsx", H)
         if name == "stock":
             # v2.1: purchased items only — same source as the Stock page.
             wb = openpyxl.Workbook()

@@ -1,33 +1,21 @@
 {% extends "base.html" %}{% block t %}Current Bakaya{% endblock %}{% block body %}
 <div class="card mt">
 <h3>🧾 Current Bakaya (nayi purchases)</h3>
-<div class="hint">Wo purchases jin ka bakaya abhi baqi hai, nayi pehle — bilkul Purchases Form ki tarah. Edit / Void / Delete har purchase ke saath hai.</div>
+<div class="hint">Sirf parties ki list hai — kisi party par <b>tap</b> karein, us ki saari purchases aur payments date ke hisaab se khul jayengi, har purchase/payment wahan Edit ho sakti hai.</div>
 <div class="big-qty">Kul Current Bakaya: <b>{{ total|rs }}</b></div>
+<div class="mt"><a class="btn small gray" href="{{ url_for('export_xlsx', name='current-bakaya') }}">📥 Excel — Current Bakaya</a></div>
 </div>
 
-{% if party_rows %}
-<div class="card">
-<h3>👥 Party-wise bakaya</h3>
-<table>
-{% for name, amt in party_rows %}
-<tr><td><b>{{ name }}</b></td><td class="num"><b>{{ amt|rs }}</b></td></tr>
-{% endfor %}
-</table>
-</div>
-{% endif %}
-
+<div id="bakaya-list">
 {% for x in rows %}
-<div class="card">
-<div class="row"><div class="grow"><b>{{ x.row.sname }}</b> <span class="hint">{{ x.row.date }} · {{ x.row.id }}</span></div><div><b>{{ x.bakaya|rs }}</b></div></div>
-<div class="hint">Purchase total: {{ x.row.amount|rs }} · Cash diya: {{ x.cash_diya|rs }}{% if x.linked %} (cash {{ x.row.cash_paid|rs }} + payments {{ x.linked|rs }}){% endif %} · <b>Bakaya bacha: {{ x.bakaya|rs }}</b></div>
-<div class="itemctl mt">
-<a class="btn small gray" href="{{ url_for('purchase_edit', pid=x.row.id) }}">✏️ Edit</a>
-<a class="btn small gray" href="{{ url_for('purchase_void', pid=x.row.id) }}">🚫 Void</a>
-<form method="post" action="{{ url_for('purchase_delete', pid=x.row.id) }}" style="display:inline" onsubmit="return confirm('Purchase delete kar dein? Stock bhi wapas ho jayega.')"><button class="btn small red" type="submit">🗑 Delete</button></form>
-</div>
-</div>
+<a class="itemlink" href="{{ url_for('supplier_ledger', sid=x.row.id) }}">
+  <div class="nm">{{ x.row.name }}</div>
+  <div class="qty">Bakaya: {{ x.bal.current_bakaya|rs }}</div>
+  <div class="chev">›</div>
+</a>
 {% else %}
-<div class="card"><div class="hint">Koi purchase bakaya nahi hai — sab clear hai. 🎉</div></div>
+<div class="card"><div class="hint">Kisi party ka current bakaya nahi hai — sab clear hai. 🎉</div></div>
 {% endfor %}
+</div>
 <a class="btn gray" data-cancel href="{{ url_for('dashboard') }}">← Home</a>
 {% endblock %}
