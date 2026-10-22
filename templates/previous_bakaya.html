@@ -1,5 +1,14 @@
 {% extends "base.html" %}{% block t %}Previous Bakaya{% endblock %}{% block body %}
 <div class="card mt">
+<h3>🕰️ Purana balance — hisaab</h3>
+<table>
+<tr><td>🏁 September ke start mein purana balance</td><td class="num"><b>{{ opening_total|rs }}</b></td></tr>
+<tr><td>➖ Us par diye gaye</td><td class="num"><b>{{ prev_paid_total|rs }}</b></td></tr>
+<tr><td><b>🟰 Ab purana bakaya</b></td><td class="num"><b>{{ total|rs }}</b></td></tr>
+</table>
+</div>
+
+<div class="card mt">
 <h3>🕰️ Previous Bakaya (purana balance)</h3>
 <div class="hint">Sirf parties ki list hai — kisi party par <b>tap</b> karein, us ka pura date-wise hisaab khul jayega: opening balance, purchases, payments — har cheez wahan Edit ho sakti hai.</div>
 <div class="big-qty">Kul Previous Bakaya: <b>{{ total|rs }}</b></div>

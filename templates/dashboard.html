@@ -1,12 +1,29 @@
 {% extends "base.html" %}{% block t %}Home{% endblock %}{% block body %}
-<style>a.kpi{display:block;text-decoration:none;color:inherit}</style>
+<style>
+details.kpi{cursor:pointer}
+details.kpi summary{list-style:none;cursor:pointer}
+details.kpi summary::-webkit-details-marker{display:none}
+details.kpi .v{margin-top:8px}
+details.kpi a.dlink{display:inline-block;margin-top:6px;font-weight:700}
+</style>
 <div class="grid2 mt">
-  <a class="kpi prev" href="{{ url_for('previous_bakaya') }}"><div class="lbl">PREVIOUS BAKAYA (purana balance)</div><div class="v neg">{{ total_prev|rs }}</div><div class="hint">Detail ke liye tap karein ›</div></a>
-  <a class="kpi cur" href="{{ url_for('current_bakaya') }}"><div class="lbl">CURRENT BAKAYA (nayi purchases)</div><div class="v neg">{{ total_cur|rs }}</div><div class="hint">Detail ke liye tap karein ›</div></a>
+  <details class="kpi prev">
+    <summary><div class="lbl">PREVIOUS BAKAYA (purana balance)</div><div class="hint">Rakam dekhne ke liye tap karein 👁</div></summary>
+    <div class="v neg">{{ total_prev|rs }}</div>
+    <a class="dlink" href="{{ url_for('previous_bakaya') }}">Detail — kis party ka kitna bacha ›</a>
+  </details>
+  <details class="kpi cur">
+    <summary><div class="lbl">CURRENT BAKAYA (nayi purchases)</div><div class="hint">Rakam dekhne ke liye tap karein 👁</div></summary>
+    <div class="v neg">{{ total_cur|rs }}</div>
+    <a class="dlink" href="{{ url_for('current_bakaya') }}">Detail — kis party ka kitna bacha ›</a>
+  </details>
 </div>
-<div class="grid2 mt">
-  <a class="kpi kul" href="{{ url_for('total_bakaya') }}"><div class="lbl">KUL BAKAYA (parties ko dena hai)</div><div class="v neg">{{ total_due|rs }}</div><div class="hint">Poora hisaab dekhne ke liye tap karein ›</div></a>
-  <a class="kpi adv" href="{{ url_for('total_bakaya') }}"><div class="lbl">ADVANCE (parties ke paas hamara)</div><div class="v">{{ total_adv|rs }}</div><div class="hint">Detail ke liye tap karein ›</div></a>
+<div class="mt">
+  <details class="kpi adv">
+    <summary><div class="lbl">ADVANCE (parties ke paas hamara)</div><div class="hint">Rakam dekhne ke liye tap karein 👁</div></summary>
+    <div class="v">{{ total_adv|rs }}</div>
+    <a class="dlink" href="{{ url_for('suppliers') }}">Parties — kis ke paas kitna hai ›</a>
+  </details>
 </div>
 
 <div class="row mt">

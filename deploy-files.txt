@@ -30,4 +30,3 @@ templates/void_form.html
 templates/current_bakaya.html
 templates/previous_bakaya.html
 templates/previous_bakaya_form.html
-templates/total_bakaya.html
