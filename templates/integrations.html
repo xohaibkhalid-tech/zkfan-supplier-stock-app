@@ -17,6 +17,27 @@ ehteyaat se, previous transactions samet.
 </div>
 
 <div class="card">
+<h3>📈 Sales App Link (ZK FAN Sales — gate pass wala system)</h3>
+<div class="hint">Sales app ka data yahan <b>sirf parha</b> jata hai — kuch wapas nahi bheja jata. Data ek secret key se mehfooz rasta se ata hai; sheet public NAHI hoti.</div>
+<table>
+<tr><td>Link setup hai?</td><td><b>{{ 'HAAN' if sales_cfg.configured else 'NAHI' }}</b></td></tr>
+<tr><td>Sales data (snapshot)</td><td><b>{{ sales_t.passes }} gate pass · {{ sales_t.fans|qty }} pankhe · {{ sales_t.net|rs }}</b></td></tr>
+<tr><td>Aakhri sync</td><td><b>{{ sales_last.at[:16].replace('T',' ') if sales_last else 'kabhi nahi' }}</b></td></tr>
+</table>
+<form method="post" action="{{ url_for('integrations_sales') }}">
+<label>Sales app ka link (exec URL)</label>
+<input name="sales_url" value="{{ sales_cfg.url }}" placeholder="https://script.google.com/macros/s/.../exec">
+<label>Secret key</label>
+<input name="sales_key" type="password" placeholder="{{ '•••••• (save hai — badalna ho to naya likhein)' if sales_cfg.key else 'key yahan dalein' }}">
+<button class="btn" type="submit">💾 Sales link save karo</button>
+</form>
+<form method="post" action="{{ url_for('sales_sync') }}">
+<input type="hidden" name="next" value="{{ url_for('integrations') }}">
+<button class="btn gray" type="submit">🔄 Abhi sales data taaza karo</button>
+</form>
+</div>
+
+<div class="card">
 <h3>💾 Backup</h3>
 <div class="hint">Database ki copy backups/ folder mein save hoti hai. Rozana pehli boot par auto-backup bhi banta hai (aakhri 30 rehte hain).</div>
 <a class="btn" href="{{ url_for('backup') }}">💾 Abhi backup lo</a>

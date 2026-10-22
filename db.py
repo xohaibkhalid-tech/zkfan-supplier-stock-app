@@ -21,7 +21,7 @@ import sqlite3
 import threading
 from datetime import datetime, date
 
-VERSION = "v3.6-forms-a"
+VERSION = "v4.0-sales-a"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get(
@@ -210,6 +210,42 @@ CREATE TABLE IF NOT EXISTS item_splits (
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sales_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  qr_id TEXT DEFAULT '',
+  gatepass TEXT DEFAULT '',
+  date TEXT DEFAULT '',
+  party TEXT DEFAULT '',
+  order_type TEXT DEFAULT '',
+  model TEXT DEFAULT '',
+  qty REAL DEFAULT 0,
+  price REAL DEFAULT 0,
+  gross REAL DEFAULT 0,
+  net REAL DEFAULT 0,
+  received REAL DEFAULT 0,
+  balance REAL DEFAULT 0,
+  status TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sales_passes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  qr_id TEXT DEFAULT '',
+  gatepass TEXT DEFAULT '',
+  date TEXT DEFAULT '',
+  status TEXT DEFAULT '',
+  fans REAL DEFAULT 0,
+  party TEXT DEFAULT '',
+  cod_amount REAL DEFAULT 0,
+  cod_received REAL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sales_sync_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT DEFAULT '',
+  lines INTEGER DEFAULT 0,
+  passes INTEGER DEFAULT 0,
+  fans REAL DEFAULT 0,
+  net REAL DEFAULT 0,
+  note TEXT DEFAULT ''
 );
 """
 

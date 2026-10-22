@@ -1,0 +1,59 @@
+{% extends "base.html" %}{% block t %}Sales{% endblock %}{% block body %}
+<div class="card mt">
+<h3>📈 Sales — September se ab tak</h3>
+{% if not cfg.configured %}
+<div class="alert">Sales link abhi setup nahi hai — <a href="{{ url_for('integrations') }}">Links page</a> par Sales app ka URL aur key dalein, phir yahan data ayega.</div>
+{% elif t.lines == 0 %}
+<div class="alert">Abhi tak koi sales data nahi aya — neeche wala button daba kar taaza data lein.</div>
+{% endif %}
+<table>
+<tr><td>Kul sale (net)</td><td class="num"><b>{{ t.net|rs }}</b></td></tr>
+<tr><td>Pankhe bike</td><td class="num"><b>{{ t.fans|qty }}</b></td></tr>
+<tr><td>Gate pass</td><td class="num"><b>{{ t.passes }}</b></td></tr>
+<tr><td>Wasool ho gaya</td><td class="num"><b>{{ t.received|rs }}</b></td></tr>
+<tr><td>Sales par bakaya (customers se lena hai)</td><td class="num"><b>{{ t.bakaya|rs }}</b></td></tr>
+</table>
+<form method="post" action="{{ url_for('sales_sync') }}">
+<input type="hidden" name="next" value="{{ url_for('sales_page') }}">
+<button class="btn" type="submit">🔄 Sales data taaza karo</button>
+</form>
+<div class="hint">{% if last %}Aakhri taaza: {{ last.at[:16].replace('T',' ') }} — {{ last.lines }} lines, {{ last.passes }} gate pass{% else %}Abhi kabhi sync nahi hua{% endif %}</div>
+</div>
+
+{% if models %}
+<div class="card">
+<h3>🌀 Model ke hisaab se sale</h3>
+<table>
+<tr><th>Model</th><th class="num">Pankhe</th><th class="num">Sale</th><th class="num">Wasool</th></tr>
+{% for m in models %}
+<tr><td><b>{{ m.model }}</b></td><td class="num">{{ m.fans|qty }}</td><td class="num">{{ m.net|rs }}</td><td class="num">{{ m.received|rs }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if months %}
+<div class="card">
+<h3>🗓️ Mahine ke hisaab se</h3>
+<table>
+<tr><th>Mahina</th><th class="num">Pankhe</th><th class="num">Sale</th></tr>
+{% for m in months %}
+<tr><td><b>{{ m.month }}</b></td><td class="num">{{ m.fans|qty }}</td><td class="num">{{ m.net|rs }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if passes %}
+<div class="card">
+<h3>🧾 Haal ke gate pass</h3>
+<table>
+<tr><th>Date</th><th>Party</th><th>Models</th><th class="num">Sale</th><th class="num">Wasool</th></tr>
+{% for p in passes %}
+<tr><td>{{ p.date }}</td><td><b>{{ p.party }}</b><br><small class="hint">{{ p.gatepass or p.qr_id }}</small></td><td>{{ p.models }}</td><td class="num">{{ p.net|rs }}</td><td class="num">{{ p.received|rs }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% endif %}
+<a class="btn gray" data-cancel href="{{ url_for('dashboard') }}">← Home</a>
+{% endblock %}

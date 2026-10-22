@@ -126,6 +126,8 @@ details[open ] summary.ghead{border-bottom:1px solid #e6ede6}
 <a href="{{ url_for('suppliers') }}"{% if ep.startswith('supplier') %} class="on"{% endif %}>👥 Parties</a>
 <a href="{{ url_for('purchases') }}"{% if ep.startswith('purchase') %} class="on"{% endif %}>🧾 Purchases</a>
 <a href="{{ url_for('payments') }}"{% if ep.startswith('payment') %} class="on"{% endif %}>💸 Payments</a>
+<a href="{{ url_for('sales_page') }}"{% if ep == 'sales_page' %} class="on"{% endif %}>📈 Sales</a>
+<a href="{{ url_for('report_page') }}"{% if ep == 'report_page' %} class="on"{% endif %}>📊 Report</a>
 <a href="{{ url_for('methods') }}"{% if ep.startswith('method') %} class="on"{% endif %}>🏦 Methods</a>
 <a href="{{ url_for('integrations') }}"{% if ep == 'integrations' %} class="on"{% endif %}>🔗 Links</a>
 <a href="{{ url_for('users') }}"{% if ep == 'users' %} class="on"{% endif %}>👤 Users</a>

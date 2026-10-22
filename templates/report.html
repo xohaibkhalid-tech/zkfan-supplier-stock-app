@@ -1,0 +1,51 @@
+{% extends "base.html" %}{% block t %}Report{% endblock %}{% block body %}
+<div class="card mt">
+<h3>📊 Report — raw material se pankhe</h3>
+<div class="hint">September se ab tak ka hisaab: kitna raw material aaya, us se kitne pankhe banne chahiye thay, asal mein kitne bike. {% if last %}Sales data aakhri dafa {{ last.at[:16].replace('T',' ') }} taaza hua tha.{% else %}Sales data abhi sync nahi hua — pehle <a href="{{ url_for('sales_page') }}">Sales page</a> se taaza karein.{% endif %}</div>
+<table>
+<tr><td>Kul purchase (raw material + maal)</td><td class="num"><b>{{ purchase_total|rs }}</b></td></tr>
+<tr><td>Kul sale</td><td class="num"><b>{{ t.net|rs }}</b></td></tr>
+<tr><td>Kul pankhe bike</td><td class="num"><b>{{ fans_total|qty }}</b></td></tr>
+</table>
+<form method="post" action="{{ url_for('sales_sync') }}">
+<input type="hidden" name="next" value="{{ url_for('report_page') }}">
+<button class="btn small" type="submit">🔄 Sales data taaza karo</button>
+</form>
+</div>
+
+<div class="card">
+<h3>🌀 Model ke hisaab se — material aur pankhe</h3>
+{% for r in rows %}
+<div style="border-top:1px solid #e3eae3;padding:10px 0">
+<div><b>{{ r.label }}</b></div>
+<div class="hint">Material aaya: Body {{ r.body|qty }} · Cup {{ r.cup|qty }} → <b>{{ r.aaya|qty }} set</b> tayyar ho sakte thay</div>
+<div class="hint">Pankhe bike: <b>{{ r.bike|qty }}</b></div>
+{% if r.farq > 0 %}
+<div>✅ <b>{{ r.farq|qty }} set</b> ka material abhi factory mein para hona chahiye</div>
+{% elif r.farq < 0 %}
+<div>⚠️ <b>{{ (-r.farq)|qty }} pankhe purane stock se bane</b> (September se pehle ka material istemal hua)</div>
+{% else %}
+<div>✔️ Jitna material aaya, utne hi pankhe bike — hisaab barabar</div>
+{% endif %}
+</div>
+{% else %}
+<div class="hint">Abhi koi dhalai purchase ya sale nahi hai.</div>
+{% endfor %}
+</div>
+
+<div class="card">
+<h3>🧩 Har pankhe ke hisse — kul hisaab</h3>
+<table>
+<tr><th>Hissa</th><th class="num">Aaya</th><th class="num">Bike (pankhe)</th><th class="num">Bachna chahiye</th><th class="num">Asal stock</th></tr>
+{% for c in comps %}
+<tr><td><b>{{ c.label }}</b></td>
+<td class="num">{{ c.aaya|qty }} {{ c.unit }}</td>
+<td class="num">{{ fans_total|qty }}</td>
+<td class="num">{% if c.bachna >= 0 %}{{ c.bachna|qty }}{% else %}<b>{{ (-c.bachna)|qty }} purane se</b>{% endif %}</td>
+<td class="num">{% if c.asal is not none %}{{ c.asal|qty }} {{ c.unit }}{% else %}<span class="hint">kg mein — Stock page par</span>{% endif %}</td></tr>
+{% endfor %}
+</table>
+<div class="hint">Har pankhe par 1 blade set, 1 kit aur 1 canopy lagti hai — is liye hissay kul bike hue pankho se hisaab hue hain.</div>
+</div>
+<a class="btn gray" data-cancel href="{{ url_for('dashboard') }}">← Home</a>
+{% endblock %}

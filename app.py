@@ -33,8 +33,9 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 clear_purchase_stock, list_methods, method_by_id,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
+import sales_link
 
-VERSION = db.VERSION  # "v3.6-forms-a"
+VERSION = db.VERSION  # "v4.0-sales-a"
 
 # ---------- statement PDF (reportlab, OPTIONAL dependency) ----------
 # The app must boot and serve everything else even when reportlab is
@@ -395,10 +396,21 @@ def dashboard():
         if m["min_level"] and st < m["min_level"]:
             low.append({"row": m, "stock": st})
     pend, _fail = cashbook_link.queue_counts()
+    # v4.0: Sales & Purchase card — dono kul adad September se ab tak.
+    con = _connect()
+    try:
+        purchase_total = con.execute(
+            "SELECT COALESCE(SUM(amount),0) FROM purchases"
+            " WHERE status='active'").fetchone()[0] or 0
+    finally:
+        con.close()
+    sales_t = sales_link.totals()
     return render_template(
         "dashboard.html", total_adv=total_adv,
         total_prev=total_prev, total_cur=total_cur,
-        low_stock=low, sync_pending=pend)
+        low_stock=low, sync_pending=pend,
+        purchase_total=purchase_total, sales_t=sales_t,
+        sales_ready=sales_t["lines"] > 0)
 
 
 # ---------- suppliers / parties (owner) ----------
@@ -1925,6 +1937,116 @@ def material_add():
     return redirect(url_for("stock"))
 
 
+# ---------- sales link + report (owner, v4.0) ----------
+
+@app.route("/sales")
+@owner_required
+def sales_page():
+    sales_link.maybe_autosync()
+    return render_template(
+        "sales.html", t=sales_link.totals(), models=sales_link.by_model(),
+        months=sales_link.by_month(), passes=sales_link.recent_passes(),
+        last=sales_link.last_sync(), cfg=sales_link.get_config())
+
+
+@app.route("/sales/sync", methods=["POST"])
+@owner_required
+def sales_sync():
+    try:
+        s = sales_link.sync_sales()
+        flash(f"Sales data taaza ho gaya — {s['passes']} gate pass, "
+              f"{fmt_qty(s['fans'])} pankhe, kul sale {fmt_rs(s['net'])}",
+              "ok")
+    except sales_link.SalesLinkError as e:
+        flash(str(e), "err")
+    return redirect(_safe_next() or url_for("sales_page"))
+
+
+def _report_data():
+    """Material -> pankhe analysis (user ki baat): har model ke liye
+    kitna raw material aaya (dhalai sets), kitne pankhe bike; kam bike
+    to kitna material abhi hona chahiye, zyada bike to kitne purane
+    stock se bane. Hissay (blades/kits/canopy) kul pankho ke hisaab se."""
+    con = _connect()
+    try:
+        dhalai = db.dhalai_body_cup(con)
+        comp_rows = con.execute(
+            "SELECT TRIM(pl.name) AS name, pl.kind AS kind,"
+            " COALESCE(SUM(pl.qty),0) AS q,"
+            " COALESCE(SUM(pl.body_qty),0) AS bq"
+            " FROM purchase_lines pl"
+            " JOIN purchases p ON p.id = pl.purchase_id"
+            " WHERE p.status='active' AND pl.kind IN ('piece','set')"
+            " AND TRIM(pl.name) <> ''"
+            " GROUP BY TRIM(pl.name), pl.kind").fetchall()
+        aliases = db._alias_map(con)
+        mats = con.execute(
+            "SELECT * FROM materials WHERE active=1").fetchall()
+        stocks = db.all_material_stocks(
+            con, {m["id"]: (m["opening_stock"] or 0) for m in mats})
+        remaining = {}
+        for m in mats:
+            ck = db.canonical_of(m["name"], aliases)
+            remaining[ck] = remaining.get(ck, 0.0) \
+                + (stocks.get(m["id"], 0) or 0)
+    finally:
+        con.close()
+    sold = sales_link.sold_by_canonical()
+    fans_total = sum(sold.values())
+    rows = []
+    for k in sorted(set(dhalai) | set(sold)):
+        d = dhalai.get(k, {"body": 0.0, "cup": 0.0})
+        aaya = min(d["body"], d["cup"])
+        bike = sold.get(k, 0.0)
+        rows.append({"key": k, "label": k.title(), "body": d["body"],
+                     "cup": d["cup"], "aaya": aaya, "bike": bike,
+                     "farq": aaya - bike})
+    rows.sort(key=lambda r: -max(r["aaya"], r["bike"]))
+    blades_aaya, kits_aaya, canopy_aaya = 0.0, 0.0, 0.0
+    kit_keys, canopy_keys = set(), set()
+    for r in comp_rows:
+        ck = db.canonical_of(r["name"], aliases)
+        if r["kind"] == "set":
+            blades_aaya += r["bq"] or 0
+        elif "kit" in ck:
+            kits_aaya += r["q"] or 0
+            kit_keys.add(ck)
+        if "canopy" in ck or "conopy" in ck:
+            canopy_aaya += r["q"] or 0
+            canopy_keys.add(ck)
+    comps = [
+        {"label": "Blades (sets)", "aaya": blades_aaya, "asal": None,
+         "unit": "sets"},
+        {"label": "Kits", "aaya": kits_aaya,
+         "asal": sum(remaining.get(k, 0.0) for k in kit_keys),
+         "unit": "pcs"},
+        {"label": "Canopy", "aaya": canopy_aaya,
+         "asal": sum(remaining.get(k, 0.0) for k in canopy_keys),
+         "unit": "pcs"},
+    ]
+    for c in comps:
+        c["bachna"] = c["aaya"] - fans_total
+    return rows, comps, fans_total
+
+
+@app.route("/report")
+@owner_required
+def report_page():
+    sales_link.maybe_autosync()
+    rows, comps, fans_total = _report_data()
+    con = _connect()
+    try:
+        purchase_total = con.execute(
+            "SELECT COALESCE(SUM(amount),0) FROM purchases"
+            " WHERE status='active'").fetchone()[0] or 0
+    finally:
+        con.close()
+    return render_template(
+        "report.html", rows=rows, comps=comps, fans_total=fans_total,
+        t=sales_link.totals(), purchase_total=purchase_total,
+        last=sales_link.last_sync(), cfg=sales_link.get_config())
+
+
 # ---------- integrations (owner) — CashBook OFF ----------
 
 @app.route("/integrations")
@@ -1938,7 +2060,20 @@ def integrations():
         con.close()
     pend, fail = cashbook_link.queue_counts()
     return render_template("integrations.html", rows=rows,
-                           pending=pend, failed=fail, direct=False)
+                           pending=pend, failed=fail, direct=False,
+                           sales_cfg=sales_link.get_config(),
+                           sales_last=sales_link.last_sync(),
+                           sales_t=sales_link.totals())
+
+
+@app.route("/integrations/sales", methods=["POST"])
+@owner_required
+def integrations_sales():
+    sales_link.set_config(request.form.get("sales_url"),
+                          request.form.get("sales_key"))
+    flash("Sales link save ho gaya — ab Sales page se data taaza karein",
+          "ok")
+    return redirect(url_for("integrations"))
 
 
 # ---------- excel exports (owner) ----------

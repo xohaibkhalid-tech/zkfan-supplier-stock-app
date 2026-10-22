@@ -26,6 +26,21 @@ details.kpi a.dlink{display:inline-block;margin-top:6px;font-weight:700}
   </details>
 </div>
 
+<div class="mt">
+  <details class="kpi kul">
+    <summary><div class="lbl">SALES & PURCHASE (September se ab tak)</div><div class="hint">Adad dekhne ke liye tap karein 👁</div></summary>
+    {% if sales_ready %}
+    <div class="v">Purchase: {{ purchase_total|rs }}</div>
+    <div class="v">Sale: {{ sales_t.net|rs }}</div>
+    <div class="hint">{{ sales_t.fans|qty }} pankhe bike · {{ sales_t.passes }} gate pass</div>
+    {% else %}
+    <div class="hint">Sales data abhi link nahi hua — pehle Links page par setup karein, phir yahan purchase aur sale dono ke kul adad ayenge.</div>
+    {% endif %}
+    <a class="dlink" href="{{ url_for('sales_page') }}">Sales ki tafseel ›</a><br>
+    <a class="dlink" href="{{ url_for('report_page') }}">📊 Report — material se pankhe ›</a>
+  </details>
+</div>
+
 <div class="row mt">
   <a class="btn green grow" href="{{ url_for('purchase_add') }}">🧾 Nayi Purchase</a>
   <a class="btn grow" href="{{ url_for('payment_add') }}">💸 Payment do</a>
