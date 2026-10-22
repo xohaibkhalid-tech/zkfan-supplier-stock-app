@@ -34,7 +34,7 @@ from db import (init_db, _connect, now_iso, today_iso, next_id, audit,
                 seed_payment_methods, purchased_items, purchased_item)
 import cashbook_link
 
-VERSION = db.VERSION  # "v3.4-forms-b"
+VERSION = db.VERSION  # "v3.4-forms-c"
 
 # ---------- statement PDF (reportlab, OPTIONAL dependency) ----------
 # The app must boot and serve everything else even when reportlab is
@@ -921,11 +921,11 @@ def _save_purchase(pid, header, lines, actor, is_new):
     try:
         if is_new:
             con.execute(
-                """INSERT INTO purchases (id, date, supplier_id, total_kg,
-                    amount, status, cashbook_status, notes, created_by,
-                    created_at, mode, rate_per_kg, cash_paid, cash_method_id,
-                    cash_method_name)
-                   VALUES (?,?,?,?,?,'active','na',?,?,?,?,?,?,?,?)""",
+                """INSERT INTO purchases (id, date, supplier_id, model,
+                    total_kg, amount, status, cashbook_status, notes,
+                    created_by, created_at, mode, rate_per_kg, cash_paid,
+                    cash_method_id, cash_method_name)
+                   VALUES (?,?,?,'',?,?,'active','na',?,?,?,?,?,?,?,?)""",
                 (pid, header["date"], header["supplier_id"], total_kg,
                  amount, header["notes"], actor, now_iso(), header["mode"],
                  header["rate_per_kg"], header["cash_paid"],
