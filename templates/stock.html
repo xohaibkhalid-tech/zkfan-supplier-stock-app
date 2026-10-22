@@ -1,4 +1,18 @@
 {% extends "base.html" %}{% block t %}Stock{% endblock %}{% block body %}
+{% macro itemrow(x) %}
+  <div class="itemrow">
+    <div class="row">
+      <div class="grow"><b>{{ x.name }}</b> {% if x.low %}<span class="badge b-low">LOW</span>{% endif %}
+      {% if x.variants|length > 1 %}<br><small class="hint">Shamil naam: {{ x.variants|join(', ') }}</small>{% endif %}
+      </div>
+      <a class="link" href="{{ url_for('material_ledger', item=x.name) }}">History</a>
+    </div>
+    {% if x.dhalai %}<div class="hint">Body: {{ x.dhalai.body|qty }} · Cup: {{ x.dhalai.cup|qty }} · <b>Sets: {{ x.dhalai.sets|qty }}</b>{% if x.dhalai.extra_body %} · Extra body: {{ x.dhalai.extra_body|qty }}{% endif %}{% if x.dhalai.extra_cup %} · Extra cup: {{ x.dhalai.extra_cup|qty }}{% endif %}</div>{% endif %}
+    <div class="hint">Aaya: {% if x.in_qty %}{{ x.in_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.in_kg|qty }} kg{% endif %}
+    · Use hua: {% if x.out_qty %}{{ x.out_qty|qty }} pcs{% endif %}{% if x.out_qty and x.out_kg %} · {% endif %}{% if x.out_kg %}{{ x.out_kg|qty }} kg{% endif %}{% if not x.out_qty and not x.out_kg %}—{% endif %}
+    · <b>Bacha: {% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</b></div>
+  </div>
+{% endmacro %}
 <div class="card">
 <div class="row"><h3 class="grow">📦 Factory Stock</h3>
 {% if is_owner %}<a class="btn small gray" href="{{ url_for('stock_manage') }}">⚙️ Manage Items</a>{% endif %}
@@ -9,18 +23,16 @@
 <details class="group-card" open>
   <summary class="ghead"><span class="gname">📁 {{ g.name }}</span><small class="hint">{{ g.count }} item{{ 's' if g.count != 1 }} · Bacha: {% if g.rem_qty %}{{ g.rem_qty|qty }} pcs{% endif %}{% if g.rem_qty and g.rem_kg %} · {% endif %}{% if g.rem_kg %}{{ g.rem_kg|qty }} kg{% endif %}{% if not g.rem_qty and not g.rem_kg %}0{% endif %}</small></summary>
   <div class="gitems">
-  {% for x in g.rows %}
-  <div class="itemrow">
-    <div class="row">
-      <div class="grow"><b>{{ x.name }}</b> {% if x.low %}<span class="badge b-low">LOW</span>{% endif %}
-      {% if x.variants|length > 1 %}<br><small class="hint">Shamil naam: {{ x.variants|join(', ') }}</small>{% endif %}
-      </div>
-      <a class="link" href="{{ url_for('material_ledger', item=x.name) }}">History</a>
-    </div>
-    <div class="hint">Aaya: {% if x.in_qty %}{{ x.in_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.in_kg|qty }} kg{% endif %}
-    · Use hua: {% if x.out_qty %}{{ x.out_qty|qty }} pcs{% endif %}{% if x.out_qty and x.out_kg %} · {% endif %}{% if x.out_kg %}{{ x.out_kg|qty }} kg{% endif %}{% if not x.out_qty and not x.out_kg %}—{% endif %}
-    · <b>Bacha: {% if x.in_qty %}{{ x.rem_qty|qty }} pcs{% endif %}{% if x.in_qty and x.in_kg %} · {% endif %}{% if x.in_kg %}{{ x.rem_kg|qty }} kg{% endif %}</b></div>
+  {% for p in g.pairs or [] %}
+  <div class="pairblock">
+    <div class="row"><div class="grow"><b>🏷️ {{ p.brand }}</b></div></div>
+    <div class="hint"><b>Sets tayyar: {{ p.sets|qty }} pcs</b>{% if p.extra_body %} · Extra body: {{ p.extra_body|qty }} pcs{% endif %}{% if p.extra_blade %} · Extra blade: {{ p.extra_blade|qty }} pcs{% endif %}</div>
+    {{ itemrow(p.body) }}
+    {{ itemrow(p.blade) }}
   </div>
+  {% endfor %}
+  {% for x in g.rows %}
+  {{ itemrow(x) }}
   {% endfor %}
   </div>
 </details>
